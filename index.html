@@ -196,8 +196,46 @@
             const [gameResult, setGameResult] = useState(null); 
             const [playerName, setPlayerName] = useState("");
             
-            // GLOBAL USED QUESTIONS: Store here to persist across games
-            const globalUsedQuestions = useRef(new Set()); 
+            // --- Deck System for Unique Questions ---
+            // Stores the shuffled indices [0, 1, ..., 99]
+            const deckRef = useRef([]);
+            // Points to the current card in the deck
+            const deckPointerRef = useRef(0);
+
+            // Initialize or Reshuffle Deck
+            const shuffleDeck = () => {
+                const newDeck = [...Array(VOCAB_DATA.length).keys()]; // [0, 1, 2, ..., 99]
+                // Fisher-Yates Shuffle
+                for (let i = newDeck.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [newDeck[i], newDeck[j]] = [newDeck[j], newDeck[i]];
+                }
+                deckRef.current = newDeck;
+                deckPointerRef.current = 0;
+                console.log("Deck shuffled!");
+            };
+
+            // Get Next Unique Question
+            const getNextUniqueQuestion = () => {
+                // Initialize if empty
+                if (deckRef.current.length === 0) {
+                    shuffleDeck();
+                }
+                
+                // If deck exhausted, reshuffle
+                if (deckPointerRef.current >= deckRef.current.length) {
+                    shuffleDeck();
+                }
+
+                const questionIndex = deckRef.current[deckPointerRef.current];
+                deckPointerRef.current++; // Move pointer
+                return VOCAB_DATA[questionIndex];
+            };
+            
+            // Initialize deck on first load
+            useEffect(() => {
+                shuffleDeck();
+            }, []);
             
             // Firebase State
             const [fbInstance, setFbInstance] = useState(null);
@@ -228,7 +266,6 @@
                             const auth = getAuth(app);
                             const db = getFirestore(app);
 
-                            // Sign in anonymously for your own Firebase project
                             await signInAnonymously(auth);
 
                             onAuthStateChanged(auth, (u) => {
@@ -358,7 +395,8 @@
                                     roomId={roomId}
                                     isHost={isHost}
                                     user={user}
-                                    usedQuestionsSet={globalUsedQuestions} 
+                                    // PASS THE DECK FUNCTION
+                                    getNextUniqueQuestion={getNextUniqueQuestion} 
                                     onGameOver={(p1, p2, forcedResult, times) => { 
                                         setScore({ p1, p2 });
                                         if (times) setGameTimes(times);
@@ -719,7 +757,7 @@
             );
         }
 
-        function GameEngine({ mode, botDifficulty, fb, roomId, isHost, user, onGameOver, usedQuestionsSet }) {
+        function GameEngine({ mode, botDifficulty, fb, roomId, isHost, user, onGameOver, getNextUniqueQuestion }) {
             const [currentQ, setCurrentQ] = useState(null);
             const [options, setOptions] = useState([]);
             const [timeLeft, setTimeLeft] = useState(10);
@@ -745,19 +783,8 @@
             
             // Generate Question
             const nextQuestion = () => {
-                // FIXED: Use Global Ref passed from props to persist history across games
-                const usedSet = usedQuestionsSet.current;
-                const availableWords = VOCAB_DATA.filter(word => !usedSet.has(word.id));
-                
-                // If all words used, reset pool
-                let pool = availableWords;
-                if (pool.length === 0) {
-                     pool = VOCAB_DATA;
-                     usedSet.clear();
-                }
-
-                const target = pool[Math.floor(Math.random() * pool.length)];
-                usedSet.add(target.id); // Mark as used in global history
+                // CHANGED: Use the Deck System passed from App
+                const target = getNextUniqueQuestion();
 
                 let distractors = VOCAB_DATA.filter(v => v.id !== target.id)
                                             .sort(() => 0.5 - Math.random())
