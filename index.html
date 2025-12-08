@@ -196,6 +196,9 @@
             const [gameResult, setGameResult] = useState(null); 
             const [playerName, setPlayerName] = useState("");
             
+            // GLOBAL USED QUESTIONS: Store here to persist across games
+            const globalUsedQuestions = useRef(new Set()); 
+            
             // Firebase State
             const [fbInstance, setFbInstance] = useState(null);
             const [user, setUser] = useState(null);
@@ -252,13 +255,11 @@
 
             const handleLogin = async (name) => {
                 setPlayerName(name);
-                // Optional: Save user to leaderboard collection immediately to ensure they exist
                 if (fbInstance && user) {
                     const { doc, setDoc } = window.firebaseModules;
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
                     const userRef = doc(fbInstance.db, 'artifacts', appId, 'public', 'data', 'leaderboard', user.uid);
                     try {
-                        // Use merge to avoid overwriting existing wins if they relogin
                         await setDoc(userRef, { name: name }, { merge: true });
                     } catch (e) {
                         console.error("Error saving user data:", e);
@@ -357,13 +358,13 @@
                                     roomId={roomId}
                                     isHost={isHost}
                                     user={user}
+                                    usedQuestionsSet={globalUsedQuestions} // PASS THIS REF DOWN
                                     onGameOver={(p1, p2, forcedResult, times) => { 
                                         setScore({ p1, p2 });
                                         if (times) setGameTimes(times);
                                         
                                         if (forcedResult) {
                                             setGameResult(forcedResult);
-                                            // Update leaderboard if I won in online mode
                                             if (forcedResult === 'win' && mode === 'online') {
                                                 incrementWin();
                                             }
@@ -502,7 +503,6 @@
                         const snapshot = await getDocs(lbRef);
                         const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                         
-                        // Sort by wins descending (Client-side sort)
                         data.sort((a, b) => (b.wins || 0) - (a.wins || 0));
                         
                         setLeaders(data.slice(0, 10)); // Top 10
@@ -719,7 +719,7 @@
             );
         }
 
-        function GameEngine({ mode, botDifficulty, fb, roomId, isHost, user, onGameOver }) {
+        function GameEngine({ mode, botDifficulty, fb, roomId, isHost, user, onGameOver, usedQuestionsSet }) {
             const [currentQ, setCurrentQ] = useState(null);
             const [options, setOptions] = useState([]);
             const [timeLeft, setTimeLeft] = useState(10);
@@ -727,11 +727,10 @@
             const [opScore, setOpScore] = useState(0);
             const [feedback, setFeedback] = useState(null); 
             const [gameActive, setGameActive] = useState(true);
-            const [elapsedTime, setElapsedTime] = useState(0); // Show current timer
-            const usedQuestionsRef = useRef(new Set()); // To track used questions
+            const [elapsedTime, setElapsedTime] = useState(0); 
             
             const botIntervalRef = useRef(null);
-            const startTimeRef = useRef(Date.now()); // Capture start time
+            const startTimeRef = useRef(Date.now()); 
             const timerRef = useRef(null);
 
             // Elapsed Timer Loop (Visual only)
@@ -746,18 +745,19 @@
             
             // Generate Question
             const nextQuestion = () => {
-                // Filter out used questions
-                const availableWords = VOCAB_DATA.filter(word => !usedQuestionsRef.current.has(word.id));
+                // FIXED: Use Global Ref passed from props to persist history across games
+                const usedSet = usedQuestionsSet.current;
+                const availableWords = VOCAB_DATA.filter(word => !usedSet.has(word.id));
                 
-                // If all words used, reset pool (or could just reuse all if needed)
+                // If all words used, reset pool
                 let pool = availableWords;
                 if (pool.length === 0) {
                      pool = VOCAB_DATA;
-                     usedQuestionsRef.current.clear();
+                     usedSet.clear();
                 }
 
                 const target = pool[Math.floor(Math.random() * pool.length)];
-                usedQuestionsRef.current.add(target.id); // Mark as used
+                usedSet.add(target.id); // Mark as used in global history
 
                 let distractors = VOCAB_DATA.filter(v => v.id !== target.id)
                                             .sort(() => 0.5 - Math.random())
@@ -771,7 +771,7 @@
 
             // Initial Start
             useEffect(() => {
-                startTimeRef.current = Date.now(); // Reset start time when component mounts/game starts
+                startTimeRef.current = Date.now(); 
                 nextQuestion();
                 
                 // Bot Logic
