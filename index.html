@@ -192,6 +192,7 @@
             const [mode, setMode] = useState(null); // 'bot', 'online'
             const [botDifficulty, setBotDifficulty] = useState('medium'); // 'easy', 'medium', 'hard'
             const [score, setScore] = useState({ p1: 0, p2: 0 });
+            const [gameTimes, setGameTimes] = useState({ p1: 0, p2: 0 }); // Store finish times
             const [gameResult, setGameResult] = useState(null); // 'win', 'lose', 'draw'
             
             // Firebase State
@@ -241,6 +242,7 @@
 
             const resetGame = () => {
                 setScore({ p1: 0, p2: 0 });
+                setGameTimes({ p1: 0, p2: 0 });
                 setGameResult(null);
                 setRoomId("");
                 setRoomError("");
@@ -303,8 +305,10 @@
                                     roomId={roomId}
                                     isHost={isHost}
                                     user={user}
-                                    onGameOver={(p1, p2, forcedResult) => { // Updated to accept forcedResult
+                                    onGameOver={(p1, p2, forcedResult, times) => { 
                                         setScore({ p1, p2 });
+                                        if (times) setGameTimes(times);
+                                        
                                         if (forcedResult) {
                                             setGameResult(forcedResult);
                                         } else {
@@ -321,6 +325,7 @@
                                 <ResultScreen 
                                     result={gameResult} 
                                     score={score} 
+                                    times={gameTimes}
                                     onRestart={resetGame} 
                                 />
                             )}
@@ -420,7 +425,6 @@
             const [status, setStatus] = useState("init"); // init, waiting, joining
             const [generatedCode, setGeneratedCode] = useState("");
             const { collection, doc, setDoc, onSnapshot, updateDoc, getDoc } = window.firebaseModules;
-            // Use a default app ID for your custom setup if __app_id is undefined
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
 
             // Create Room
@@ -438,7 +442,9 @@
                     status: 'waiting',
                     p1Score: 0,
                     p2Score: 0,
-                    winnerId: null, // Initial winnerId
+                    p1Time: 0,
+                    p2Time: 0,
+                    winnerId: null,
                     createdAt: Date.now()
                 });
 
@@ -536,9 +542,23 @@
             const [timeLeft, setTimeLeft] = useState(10);
             const [myScore, setMyScore] = useState(0);
             const [opScore, setOpScore] = useState(0);
-            const [feedback, setFeedback] = useState(null); // 'correct', 'wrong'
+            const [feedback, setFeedback] = useState(null); 
             const [gameActive, setGameActive] = useState(true);
+            const [elapsedTime, setElapsedTime] = useState(0); // Show current timer
+            
             const botIntervalRef = useRef(null);
+            const startTimeRef = useRef(Date.now()); // Capture start time
+            const timerRef = useRef(null);
+
+            // Elapsed Timer Loop (Visual only)
+            useEffect(() => {
+                if (gameActive) {
+                    timerRef.current = setInterval(() => {
+                        setElapsedTime(((Date.now() - startTimeRef.current) / 1000).toFixed(1));
+                    }, 100);
+                }
+                return () => clearInterval(timerRef.current);
+            }, [gameActive]);
             
             // Generate Question
             const nextQuestion = () => {
@@ -550,11 +570,12 @@
                 
                 setCurrentQ(target);
                 setOptions(allOptions);
-                setTimeLeft(10); // Reset timer
+                setTimeLeft(10); 
             };
 
             // Initial Start
             useEffect(() => {
+                startTimeRef.current = Date.now(); // Reset start time when component mounts/game starts
                 nextQuestion();
                 
                 // Bot Logic
@@ -588,7 +609,7 @@
                 };
             }, [botDifficulty]);
 
-            // Timer Logic
+            // Question Timer Logic
             useEffect(() => {
                 if (!gameActive) return;
                 if (timeLeft <= 0) {
@@ -606,7 +627,6 @@
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
                     const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
 
-                    // Listen to room updates
                     const unsub = onSnapshot(roomRef, (snap) => {
                         const data = snap.data();
                         if (!data) return;
@@ -619,10 +639,20 @@
                         // Check for Winner ID (Single Source of Truth)
                         if (data.winnerId) {
                             setGameActive(false);
+                            
+                            // Get finished times
+                            const p1Time = data.p1Time || 0;
+                            const p2Time = data.p2Time || 0;
+                            
+                            const finalTimes = {
+                                p1: isHost ? p1Time : p2Time,
+                                p2: isHost ? p2Time : p1Time
+                            };
+
                             if (data.winnerId === user.uid) {
-                                endGame(10, newOpScore, 'win'); // I won
+                                endGame(10, newOpScore, 'win', finalTimes); 
                             } else {
-                                endGame(newMyScore, 10, 'lose'); // I lost
+                                endGame(newMyScore, 10, 'lose', finalTimes); 
                             }
                         }
                     });
@@ -631,12 +661,17 @@
                 }
             }, [mode, fb, roomId]);
 
-            const endGame = (finalMy, finalOp, explicitResult) => {
+            const endGame = (finalMy, finalOp, explicitResult, finalTimes) => {
                 setGameActive(false);
-                onGameOver(finalMy, finalOp, explicitResult);
+                // If offline/bot, calculate time locally
+                if (!finalTimes && mode === 'bot') {
+                     const myFinishTime = (Date.now() - startTimeRef.current) / 1000;
+                     finalTimes = { p1: myFinishTime, p2: 0 }; // Bot time irrelevant mostly
+                }
+                onGameOver(finalMy, finalOp, explicitResult, finalTimes);
             };
 
-            const updateOnlineScore = async (newScore) => {
+            const updateOnlineScore = async (newScore, currentDuration) => {
                 if (mode !== 'online') return;
                 const { doc, runTransaction } = window.firebaseModules;
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
@@ -648,13 +683,15 @@
                         if (!sfDoc.exists()) throw "Document does not exist!";
 
                         const data = sfDoc.data();
+                        if (data.winnerId) return; // Winner already set
+
+                        const updates = { 
+                            [isHost ? 'p1Score' : 'p2Score']: newScore 
+                        };
                         
-                        // If winner already declared, do nothing (game over)
-                        if (data.winnerId) return;
+                        // Update time used
+                        updates[isHost ? 'p1Time' : 'p2Time'] = currentDuration;
 
-                        const updates = { [isHost ? 'p1Score' : 'p2Score']: newScore };
-
-                        // First to reach 10 claims the win
                         if (newScore >= 10) {
                             updates.winnerId = user.uid;
                         }
@@ -674,16 +711,14 @@
                     const newScore = myScore + 1;
                     setMyScore(newScore);
                     
+                    const currentDuration = (Date.now() - startTimeRef.current) / 1000;
+
                     if (mode === 'online') {
-                         updateOnlineScore(newScore);
-                         // If online, we DON'T call endGame here immediately if score >= 10.
-                         // We wait for the Snapshot to tell us we won (via winnerId).
-                         // This prevents local-only wins when race conditions occur.
+                         updateOnlineScore(newScore, currentDuration);
                          if (newScore >= 10) {
-                             setGameActive(false); // Stop playing, wait for server verdict
+                             setGameActive(false); 
                          }
                     } else {
-                        // Offline/Bot Mode: Normal immediate end
                         if (newScore >= 10) {
                             endGame(newScore, opScore);
                             return;
@@ -694,16 +729,6 @@
                 }
 
                 setTimeout(() => {
-                    // Only continue if game is still active
-                    setFeedback(null);
-                    // Check gameActive ref or state? state is fine since re-render
-                    // actually if setGameActive(false) was called, this timeout callback sees old state closure?
-                    // Better to rely on state in render or check Ref. 
-                    // But for simple React, the component might re-render.
-                    // However, we added a check at start of handleAnswer. 
-                    // We need to check if game ended during delay.
-                    // Ideally check a Ref, but for this simple app, it's ok.
-                    // Just triggering nextQuestion.
                     if (newScore < 10 || mode !== 'online') {
                         nextQuestion();
                     }
@@ -716,18 +741,21 @@
                 <div className="relative h-full flex flex-col">
                     {/* Score Board */}
                     <div className="flex justify-between items-end mb-4 bg-white p-3 rounded-xl shadow-sm border border-gray-100">
-                        <div className="text-center w-16">
+                        <div className="text-center w-20">
                             <div className="text-xs font-bold text-gray-400">คุณ</div>
                             <div className="text-3xl font-black text-blue-500">{myScore}</div>
                         </div>
                         <div className="text-center flex-1 px-4 pb-2">
-                             <div className="text-xs text-gray-400 mb-1">เป้าหมาย: 10 คะแนน</div>
+                             <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                <span>เป้าหมาย: 10</span>
+                                <span className="font-mono text-indigo-500">⏱ {elapsedTime}s</span>
+                             </div>
                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden flex">
                                 <div style={{width: `${(myScore/10)*100}%`}} className="h-full bg-blue-500 transition-all duration-500"></div>
                                 <div style={{width: `${(opScore/10)*100}%`}} className="h-full bg-red-500 transition-all duration-500"></div>
                              </div>
                         </div>
-                        <div className="text-center w-16">
+                        <div className="text-center w-20">
                             <div className="text-xs font-bold text-gray-400">{mode === 'bot' ? 'บอท' : 'เพื่อน'}</div>
                             <div className="text-3xl font-black text-red-500">{opScore}</div>
                         </div>
@@ -772,7 +800,7 @@
             );
         }
 
-        function ResultScreen({ result, score, onRestart }) {
+        function ResultScreen({ result, score, times, onRestart }) {
             const isWin = result === 'win';
             return (
                 <div className="text-center py-8">
@@ -784,18 +812,29 @@
                         {isWin ? 'YOU WIN!' : (result === 'draw' ? 'เสมอ!' : 'GAME OVER')}
                     </h2>
                     
-                    <p className="text-gray-500 mb-8">
-                        {isWin ? 'เก่งมากๆ เลยนะ!' : 'พยายามใหม่อีกครั้งนะ!'}
+                    <p className="text-gray-500 mb-6">
+                        {isWin ? 'สุดยอด! ความเร็วคือปีศาจ!' : 'พยายามใหม่อีกครั้งนะ!'}
                     </p>
 
-                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-8 mx-auto max-w-[200px]">
-                        <div className="flex justify-between mb-2">
-                            <span>คุณ</span>
-                            <span className="font-bold text-blue-500">{score.p1}</span>
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-8 mx-auto w-full">
+                        <div className="grid grid-cols-3 gap-2 text-sm border-b pb-2 mb-2 font-bold text-gray-400">
+                            <div>ผู้เล่น</div>
+                            <div>คะแนน</div>
+                            <div>เวลา (วิ)</div>
                         </div>
-                        <div className="flex justify-between">
-                            <span>คู่แข่ง</span>
-                            <span className="font-bold text-red-500">{score.p2}</span>
+                        <div className="grid grid-cols-3 gap-2 mb-3 items-center">
+                            <div className="font-bold text-blue-500 text-left">คุณ</div>
+                            <div className="font-black text-xl">{score.p1}</div>
+                            <div className="text-gray-600 bg-gray-100 rounded px-2 py-1">
+                                {times && times.p1 ? Number(times.p1).toFixed(2) : '-'}s
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 items-center">
+                            <div className="font-bold text-red-500 text-left">คู่แข่ง</div>
+                            <div className="font-black text-xl">{score.p2}</div>
+                            <div className="text-gray-600 bg-gray-100 rounded px-2 py-1">
+                                {times && times.p2 ? Number(times.p2).toFixed(2) : '-'}s
+                            </div>
                         </div>
                     </div>
 
