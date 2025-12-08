@@ -1,0 +1,768 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vocab Battle: ศึกคำศัพท์ประถม</title>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Fonts: Prompt for Thai -->
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDKs (Modular) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        
+        // Expose to window for React component to use
+        window.firebaseModules = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, getDoc };
+    </script>
+
+    <style>
+        body {
+            font-family: 'Prompt', sans-serif;
+            background-color: #f0f9ff;
+            touch-action: manipulation; /* Prevent double-tap zoom */
+        }
+        .card-bounce {
+            transition: transform 0.1s;
+        }
+        .card-bounce:active {
+            transform: scale(0.95);
+        }
+        .emoji-float {
+            animation: float 3s ease-in-out infinite;
+        }
+        @keyframes float {
+            0% { transform: translateY(0px); }
+            50% { transform: translateY(-10px); }
+            100% { transform: translateY(0px); }
+        }
+        /* Custom scrollbar for vocab list */
+        .custom-scroll::-webkit-scrollbar {
+            width: 8px;
+        }
+        .custom-scroll::-webkit-scrollbar-track {
+            background: #f1f1f1; 
+        }
+        .custom-scroll::-webkit-scrollbar-thumb {
+            background: #888; 
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- Game Data (Vocabulary 100 Words) ---
+        const VOCAB_DATA = [
+            // --- Fruits & Veg ---
+            { id: 1, word: "Apple", thai: "แอปเปิล", category: "Fruit", emoji: "🍎" },
+            { id: 2, word: "Banana", thai: "กล้วย", category: "Fruit", emoji: "🍌" },
+            { id: 18, word: "Orange", thai: "ส้ม", category: "Fruit", emoji: "🍊" },
+            { id: 19, word: "Watermelon", thai: "แตงโม", category: "Fruit", emoji: "🍉" },
+            { id: 21, word: "Grape", thai: "องุ่น", category: "Fruit", emoji: "🍇" },
+            { id: 22, word: "Strawberry", thai: "สตรอว์เบอร์รี", category: "Fruit", emoji: "🍓" },
+            { id: 23, word: "Lemon", thai: "มะนาว", category: "Fruit", emoji: "🍋" },
+            { id: 24, word: "Peach", thai: "ลูกพีช", category: "Fruit", emoji: "🍑" },
+            { id: 25, word: "Cherry", thai: "เชอร์รี่", category: "Fruit", emoji: "🍒" },
+            { id: 26, word: "Coconut", thai: "มะพร้าว", category: "Fruit", emoji: "🥥" },
+            { id: 27, word: "Mango", thai: "มะม่วง", category: "Fruit", emoji: "🥭" },
+            { id: 28, word: "Pineapple", thai: "สับปะรด", category: "Fruit", emoji: "🍍" },
+            { id: 29, word: "Carrot", thai: "แครอท", category: "Veg", emoji: "🥕" },
+            { id: 30, word: "Corn", thai: "ข้าวโพด", category: "Veg", emoji: "🌽" },
+            { id: 31, word: "Tomato", thai: "มะเขือเทศ", category: "Veg", emoji: "🍅" },
+            { id: 32, word: "Broccoli", thai: "บรอกโคลี", category: "Veg", emoji: "🥦" },
+
+            // --- Animals ---
+            { id: 3, word: "Cat", thai: "แมว", category: "Animal", emoji: "🐱" },
+            { id: 4, word: "Dog", thai: "สุนัข", category: "Animal", emoji: "🐶" },
+            { id: 5, word: "Elephant", thai: "ช้าง", category: "Animal", emoji: "🐘" },
+            { id: 6, word: "Fish", thai: "ปลา", category: "Animal", emoji: "🐟" },
+            { id: 16, word: "Bird", thai: "นก", category: "Animal", emoji: "🐦" },
+            { id: 17, word: "Pig", thai: "หมู", category: "Animal", emoji: "🐷" },
+            { id: 33, word: "Lion", thai: "สิงโต", category: "Animal", emoji: "🦁" },
+            { id: 34, word: "Tiger", thai: "เสือ", category: "Animal", emoji: "🐯" },
+            { id: 35, word: "Monkey", thai: "ลิง", category: "Animal", emoji: "🐵" },
+            { id: 36, word: "Bear", thai: "หมี", category: "Animal", emoji: "🐻" },
+            { id: 37, word: "Rabbit", thai: "กระต่าย", category: "Animal", emoji: "🐰" },
+            { id: 38, word: "Chicken", thai: "ไก่", category: "Animal", emoji: "🐔" },
+            { id: 39, word: "Duck", thai: "เป็ด", category: "Animal", emoji: "🦆" },
+            { id: 40, word: "Cow", thai: "วัว", category: "Animal", emoji: "🐄" },
+            { id: 41, word: "Horse", thai: "ม้า", category: "Animal", emoji: "🐴" },
+            { id: 42, word: "Sheep", thai: "แกะ", category: "Animal", emoji: "🐑" },
+            { id: 43, word: "Snake", thai: "งู", category: "Animal", emoji: "🐍" },
+            { id: 44, word: "Bee", thai: "ผึ้ง", category: "Animal", emoji: "🐝" },
+            { id: 45, word: "Butterfly", thai: "ผีเสื้อ", category: "Animal", emoji: "🦋" },
+            { id: 46, word: "Turtle", thai: "เต่า", category: "Animal", emoji: "🐢" },
+            { id: 47, word: "Frog", thai: "กบ", category: "Animal", emoji: "🐸" },
+            { id: 48, word: "Mouse", thai: "หนู", category: "Animal", emoji: "🐭" },
+            { id: 49, word: "Panda", thai: "แพนด้า", category: "Animal", emoji: "🐼" },
+            { id: 50, word: "Koala", thai: "โคอาล่า", category: "Animal", emoji: "🐨" },
+            { id: 51, word: "Penguin", thai: "เพนกวิน", category: "Animal", emoji: "🐧" },
+            { id: 52, word: "Whale", thai: "วาฬ", category: "Animal", emoji: "🐋" },
+            { id: 53, word: "Dolphin", thai: "โลมา", category: "Animal", emoji: "🐬" },
+            { id: 54, word: "Crab", thai: "ปู", category: "Animal", emoji: "🦀" },
+
+            // --- Colors ---
+            { id: 7, word: "Green", thai: "สีเขียว", category: "Color", emoji: "🟢" },
+            { id: 8, word: "Red", thai: "สีแดง", category: "Color", emoji: "🔴" },
+            { id: 9, word: "Blue", thai: "สีฟ้า", category: "Color", emoji: "🔵" },
+            { id: 55, word: "Yellow", thai: "สีเหลือง", category: "Color", emoji: "🟡" },
+            { id: 56, word: "Purple", thai: "สีม่วง", category: "Color", emoji: "🟣" },
+            { id: 57, word: "Orange Color", thai: "สีส้ม", category: "Color", emoji: "🟠" },
+            { id: 58, word: "Black", thai: "สีดำ", category: "Color", emoji: "⚫" },
+            { id: 59, word: "White", thai: "สีขาว", category: "Color", emoji: "⚪" },
+            { id: 60, word: "Brown", thai: "สีน้ำตาล", category: "Color", emoji: "🟤" },
+
+            // --- School & Objects ---
+            { id: 10, word: "Book", thai: "หนังสือ", category: "School", emoji: "📚" },
+            { id: 11, word: "Pencil", thai: "ดินสอ", category: "School", emoji: "✏️" },
+            { id: 20, word: "Umbrella", thai: "ร่ม", category: "Object", emoji: "☂️" },
+            { id: 61, word: "Pen", thai: "ปากกา", category: "School", emoji: "🖊️" },
+            { id: 62, word: "Ruler", thai: "ไม้บรรทัด", category: "School", emoji: "📏" },
+            { id: 63, word: "Eraser", thai: "ยางลบ", category: "School", emoji: "🧽" },
+            { id: 64, word: "Bag", thai: "กระเป๋า", category: "School", emoji: "🎒" },
+            { id: 65, word: "Computer", thai: "คอมพิวเตอร์", category: "Object", emoji: "💻" },
+            { id: 66, word: "Phone", thai: "โทรศัพท์", category: "Object", emoji: "📱" },
+            { id: 67, word: "Watch", thai: "นาฬิกาข้อมือ", category: "Object", emoji: "⌚" },
+            { id: 68, word: "Camera", thai: "กล้อง", category: "Object", emoji: "📷" },
+            { id: 69, word: "Key", thai: "กุญแจ", category: "Object", emoji: "🔑" },
+            { id: 70, word: "Gift", thai: "ของขวัญ", category: "Object", emoji: "🎁" },
+            { id: 71, word: "Balloon", thai: "ลูกโป่ง", category: "Object", emoji: "🎈" },
+            { id: 72, word: "Scissors", thai: "กรรไกร", category: "Object", emoji: "✂️" },
+
+            // --- Nature & Places ---
+            { id: 12, word: "Sun", thai: "ดวงอาทิตย์", category: "Nature", emoji: "☀️" },
+            { id: 13, word: "Moon", thai: "ดวงจันทร์", category: "Nature", emoji: "🌙" },
+            { id: 73, word: "Star", thai: "ดาว", category: "Nature", emoji: "⭐" },
+            { id: 74, word: "Cloud", thai: "เมฆ", category: "Nature", emoji: "☁️" },
+            { id: 75, word: "Rain", thai: "ฝน", category: "Nature", emoji: "🌧️" },
+            { id: 76, word: "Rainbow", thai: "สายรุ้ง", category: "Nature", emoji: "🌈" },
+            { id: 77, word: "Tree", thai: "ต้นไม้", category: "Nature", emoji: "🌳" },
+            { id: 78, word: "Flower", thai: "ดอกไม้", category: "Nature", emoji: "🌺" },
+            { id: 79, word: "Mountain", thai: "ภูเขา", category: "Nature", emoji: "⛰️" },
+            { id: 80, word: "Fire", thai: "ไฟ", category: "Nature", emoji: "🔥" },
+            { id: 81, word: "House", thai: "บ้าน", category: "Place", emoji: "🏠" },
+            { id: 82, word: "School", thai: "โรงเรียน", category: "Place", emoji: "🏫" },
+            { id: 83, word: "Hospital", thai: "โรงพยาบาล", category: "Place", emoji: "🏥" },
+
+            // --- Transport ---
+            { id: 14, word: "Car", thai: "รถยนต์", category: "Transport", emoji: "🚗" },
+            { id: 15, word: "Plane", thai: "เครื่องบิน", category: "Transport", emoji: "✈️" },
+            { id: 84, word: "Bus", thai: "รถบัส", category: "Transport", emoji: "🚌" },
+            { id: 85, word: "Train", thai: "รถไฟ", category: "Transport", emoji: "🚂" },
+            { id: 86, word: "Bicycle", thai: "จักรยาน", category: "Transport", emoji: "🚲" },
+            { id: 87, word: "Boat", thai: "เรือ", category: "Transport", emoji: "⛵" },
+            { id: 88, word: "Rocket", thai: "จรวด", category: "Transport", emoji: "🚀" },
+
+            // --- Food ---
+            { id: 89, word: "Bread", thai: "ขนมปัง", category: "Food", emoji: "🍞" },
+            { id: 90, word: "Rice", thai: "ข้าว", category: "Food", emoji: "🍚" },
+            { id: 91, word: "Egg", thai: "ไข่", category: "Food", emoji: "🥚" },
+            { id: 92, word: "Pizza", thai: "พิซซ่า", category: "Food", emoji: "🍕" },
+            { id: 93, word: "Burger", thai: "เบอร์เกอร์", category: "Food", emoji: "🍔" },
+            { id: 94, word: "Cake", thai: "เค้ก", category: "Food", emoji: "🍰" },
+            { id: 95, word: "Ice Cream", thai: "ไอศกรีม", category: "Food", emoji: "🍦" },
+            { id: 96, word: "Donut", thai: "โดนัท", category: "Food", emoji: "🍩" },
+
+            // --- Body & Clothes ---
+            { id: 97, word: "Eye", thai: "ตา", category: "Body", emoji: "👁️" },
+            { id: 98, word: "Ear", thai: "หู", category: "Body", emoji: "👂" },
+            { id: 99, word: "Shirt", thai: "เสื้อ", category: "Clothes", emoji: "👕" },
+            { id: 100, word: "Shoe", thai: "รองเท้า", category: "Clothes", emoji: "👟" }
+        ];
+
+        // --- Main App Component ---
+        function App() {
+            const [view, setView] = useState('menu'); // menu, difficulty_select, lobby, game, result
+            const [mode, setMode] = useState(null); // 'bot', 'online'
+            const [botDifficulty, setBotDifficulty] = useState('medium'); // 'easy', 'medium', 'hard'
+            const [score, setScore] = useState({ p1: 0, p2: 0 });
+            const [gameResult, setGameResult] = useState(null); // 'win', 'lose', 'draw'
+            
+            // Firebase State
+            const [fbInstance, setFbInstance] = useState(null);
+            const [user, setUser] = useState(null);
+            const [roomId, setRoomId] = useState("");
+            const [isHost, setIsHost] = useState(false);
+            const [roomError, setRoomError] = useState("");
+
+            // Initialize Firebase if available
+            useEffect(() => {
+                const initFirebase = async () => {
+                    try {
+                        if (typeof window.firebaseModules !== 'undefined') {
+                            const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore } = window.firebaseModules;
+                            
+                            // *** YOUR CUSTOM CONFIG HERE ***
+                            const firebaseConfig = {
+                              apiKey: "AIzaSyBfhQFlPXhlfIIcqpDcyfv_70V9Mp2UCQA",
+                              authDomain: "vocab-battle-fc3d3.firebaseapp.com",
+                              projectId: "vocab-battle-fc3d3",
+                              storageBucket: "vocab-battle-fc3d3.firebasestorage.app",
+                              messagingSenderId: "168477162438",
+                              appId: "1:168477162438:web:773e710c103f096c1d90c7",
+                              measurementId: "G-K1BSWC86MY"
+                            };
+
+                            const app = initializeApp(firebaseConfig);
+                            const auth = getAuth(app);
+                            const db = getFirestore(app);
+
+                            // Sign in anonymously for your own Firebase project
+                            await signInAnonymously(auth);
+
+                            onAuthStateChanged(auth, (u) => {
+                                if (u) setUser(u);
+                            });
+
+                            setFbInstance({ db, auth, app });
+                        }
+                    } catch (e) {
+                        console.log("Firebase Init Error:", e);
+                    }
+                };
+                initFirebase();
+            }, []);
+
+            const resetGame = () => {
+                setScore({ p1: 0, p2: 0 });
+                setGameResult(null);
+                setRoomId("");
+                setRoomError("");
+                setView('menu');
+            };
+
+            return (
+                <div className="min-h-screen bg-gradient-to-b from-blue-200 to-purple-200 flex items-center justify-center p-4">
+                    <div className="w-full max-w-md bg-white rounded-3xl shadow-2xl overflow-hidden border-4 border-white">
+                        
+                        {/* Header */}
+                        <div className="bg-indigo-600 p-4 text-center">
+                            <h1 className="text-2xl font-bold text-white flex justify-center items-center gap-2">
+                                <span className="text-3xl">🎮</span> Vocab Battle
+                            </h1>
+                            <p className="text-indigo-200 text-sm">ศึกคำศัพท์ภาษาอังกฤษ</p>
+                        </div>
+
+                        {/* Content Area */}
+                        <div className="p-6">
+                            {view === 'menu' && (
+                                <MainMenu 
+                                    onSelectMode={(m) => {
+                                        setMode(m);
+                                        if (m === 'bot') setView('difficulty_select'); 
+                                        if (m === 'online') setView('lobby');
+                                    }}
+                                    onlineEnabled={!!fbInstance}
+                                />
+                            )}
+
+                            {view === 'difficulty_select' && (
+                                <DifficultySelect 
+                                    onSelect={(diff) => {
+                                        setBotDifficulty(diff);
+                                        setView('game');
+                                    }}
+                                    onBack={() => setView('menu')}
+                                />
+                            )}
+
+                            {view === 'lobby' && fbInstance && (
+                                <Lobby 
+                                    fb={fbInstance} 
+                                    user={user} 
+                                    onGameStart={(room, host) => {
+                                        setRoomId(room);
+                                        setIsHost(host);
+                                        setView('game');
+                                    }}
+                                    onBack={() => setView('menu')}
+                                />
+                            )}
+
+                            {view === 'game' && (
+                                <GameEngine 
+                                    mode={mode}
+                                    botDifficulty={botDifficulty} 
+                                    fb={fbInstance}
+                                    roomId={roomId}
+                                    isHost={isHost}
+                                    user={user}
+                                    onGameOver={(p1, p2) => {
+                                        setScore({ p1, p2 });
+                                        if (p1 > p2) setGameResult('win');
+                                        else if (p2 > p1) setGameResult('lose');
+                                        else setGameResult('draw');
+                                        setView('result');
+                                    }}
+                                />
+                            )}
+
+                            {view === 'result' && (
+                                <ResultScreen 
+                                    result={gameResult} 
+                                    score={score} 
+                                    onRestart={resetGame} 
+                                />
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // --- Sub-Components ---
+
+        function MainMenu({ onSelectMode, onlineEnabled }) {
+            return (
+                <div className="space-y-4 text-center">
+                    <div className="py-6">
+                        <div className="text-6xl emoji-float mb-4">🦁</div>
+                        <p className="text-gray-600">เลือกโหมดการเล่น</p>
+                    </div>
+                    
+                    <button 
+                        onClick={() => onSelectMode('bot')}
+                        className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-4 px-6 rounded-2xl shadow-lg card-bounce flex items-center justify-center gap-3 transition-colors"
+                    >
+                        <span className="text-2xl">🤖</span>
+                        <div className="text-left">
+                            <div className="text-lg">เล่นคนเดียว</div>
+                            <div className="text-xs text-green-100">ฝึกฝนกับน้องบอท</div>
+                        </div>
+                    </button>
+
+                    <button 
+                        onClick={() => onSelectMode('online')}
+                        disabled={!onlineEnabled}
+                        className={`w-full font-bold py-4 px-6 rounded-2xl shadow-lg card-bounce flex items-center justify-center gap-3 transition-colors ${onlineEnabled ? 'bg-blue-500 hover:bg-blue-600 text-white' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                    >
+                        <span className="text-2xl">🌏</span>
+                        <div className="text-left">
+                            <div className="text-lg">เล่นกับเพื่อน</div>
+                            <div className="text-xs text-blue-100">
+                                {onlineEnabled ? 'สร้างห้อง/ใส่รหัส' : 'ไม่พบการเชื่อมต่อ'}
+                            </div>
+                        </div>
+                    </button>
+                    {!onlineEnabled && <p className="text-xs text-red-400 mt-2">{/* Status Message */}</p>}
+                </div>
+            );
+        }
+
+        function DifficultySelect({ onSelect, onBack }) {
+            return (
+                <div className="space-y-4 text-center">
+                    <div className="py-4">
+                        <h2 className="text-xl font-bold text-gray-700">เลือกระดับความยาก</h2>
+                        <p className="text-sm text-gray-500">น้องบอทเก่งแค่ไหนดี?</p>
+                    </div>
+                    
+                    <button 
+                        onClick={() => onSelect('easy')}
+                        className="w-full bg-green-100 hover:bg-green-200 text-green-800 font-bold py-4 px-6 rounded-2xl shadow-sm card-bounce flex items-center gap-3 border-2 border-green-200"
+                    >
+                        <span className="text-3xl">🐣</span>
+                        <div className="text-left">
+                            <div className="text-lg">ง่าย (Easy)</div>
+                            <div className="text-xs opacity-70">บอทตอบช้าและผิดบ่อย</div>
+                        </div>
+                    </button>
+
+                    <button 
+                        onClick={() => onSelect('medium')}
+                        className="w-full bg-yellow-100 hover:bg-yellow-200 text-yellow-800 font-bold py-4 px-6 rounded-2xl shadow-sm card-bounce flex items-center gap-3 border-2 border-yellow-200"
+                    >
+                        <span className="text-3xl">🐯</span>
+                        <div className="text-left">
+                            <div className="text-lg">ปานกลาง (Medium)</div>
+                            <div className="text-xs opacity-70">บอทตอบได้พอประมาณ</div>
+                        </div>
+                    </button>
+
+                    <button 
+                        onClick={() => onSelect('hard')}
+                        className="w-full bg-red-100 hover:bg-red-200 text-red-800 font-bold py-4 px-6 rounded-2xl shadow-sm card-bounce flex items-center gap-3 border-2 border-red-200"
+                    >
+                        <span className="text-3xl">🐲</span>
+                        <div className="text-left">
+                            <div className="text-lg">ยาก (Hard)</div>
+                            <div className="text-xs opacity-70">บอทเทพ ตอบเร็วและแม่น!</div>
+                        </div>
+                    </button>
+
+                    <button onClick={onBack} className="text-gray-400 text-sm underline mt-4">ย้อนกลับ</button>
+                </div>
+            );
+        }
+
+        function Lobby({ fb, user, onGameStart, onBack }) {
+            const [roomCode, setRoomCode] = useState("");
+            const [status, setStatus] = useState("init"); // init, waiting, joining
+            const [generatedCode, setGeneratedCode] = useState("");
+            const { collection, doc, setDoc, onSnapshot, updateDoc, getDoc } = window.firebaseModules;
+            // Use a default app ID for your custom setup if __app_id is undefined
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
+
+            // Create Room
+            const createRoom = async () => {
+                if (!user) return;
+                const code = Math.floor(1000 + Math.random() * 9000).toString();
+                setGeneratedCode(code);
+                setStatus("waiting");
+                
+                const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', `room_${code}`);
+                
+                await setDoc(roomRef, {
+                    hostId: user.uid,
+                    guestId: null,
+                    status: 'waiting',
+                    p1Score: 0,
+                    p2Score: 0,
+                    createdAt: Date.now()
+                });
+
+                // Listen for guest
+                const unsub = onSnapshot(roomRef, (snapshot) => {
+                    const data = snapshot.data();
+                    if (data && data.guestId) {
+                        unsub(); // Stop listening to handshake
+                        // Update status to playing
+                        updateDoc(roomRef, { status: 'playing' });
+                        onGameStart(`room_${code}`, true);
+                    }
+                });
+            };
+
+            // Join Room
+            const joinRoom = async () => {
+                if (!roomCode || roomCode.length !== 4) return;
+                setStatus("joining");
+                
+                const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', `room_${roomCode}`);
+                const snap = await getDoc(roomRef);
+
+                if (snap.exists() && snap.data().status === 'waiting') {
+                    await updateDoc(roomRef, {
+                        guestId: user.uid,
+                        status: 'ready'
+                    });
+                    onGameStart(`room_${roomCode}`, false);
+                } else {
+                    setStatus("init");
+                    alert("ไม่พบห้องหรือห้องเต็มแล้ว");
+                }
+            };
+
+            return (
+                <div className="text-center space-y-6">
+                    <h2 className="text-xl font-bold text-gray-700">ห้องพักนักสู้</h2>
+                    
+                    {status === 'init' && (
+                        <div className="space-y-4">
+                            <div className="bg-blue-50 p-4 rounded-xl">
+                                <p className="mb-2 text-sm text-gray-600">มีรหัสห้องเพื่อนไหม?</p>
+                                <div className="flex gap-2">
+                                    <input 
+                                        type="number" 
+                                        maxLength="4"
+                                        placeholder="1234"
+                                        className="w-full text-center text-2xl tracking-widest p-2 border-2 border-blue-200 rounded-lg focus:border-blue-500 outline-none"
+                                        value={roomCode}
+                                        onChange={(e) => setRoomCode(e.target.value)}
+                                    />
+                                    <button 
+                                        onClick={joinRoom}
+                                        className="bg-blue-500 text-white px-4 rounded-lg font-bold"
+                                    >
+                                        เข้า
+                                    </button>
+                                </div>
+                            </div>
+                            
+                            <div className="relative">
+                                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300"></div></div>
+                                <div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">หรือ</span></div>
+                            </div>
+
+                            <button 
+                                onClick={createRoom}
+                                className="w-full bg-indigo-500 text-white py-3 rounded-xl font-bold shadow-md hover:bg-indigo-600"
+                            >
+                                สร้างห้องใหม่
+                            </button>
+                        </div>
+                    )}
+
+                    {status === 'waiting' && (
+                        <div className="py-8 animate-pulse">
+                            <p className="text-gray-500 mb-2">รหัสห้องของคุณ</p>
+                            <div className="text-5xl font-mono font-bold text-indigo-600 tracking-widest mb-4">
+                                {generatedCode}
+                            </div>
+                            <p className="text-sm text-gray-400">บอกรหัสนี้ให้เพื่อนเข้ามา...</p>
+                            <div className="mt-4 text-3xl">⏳</div>
+                        </div>
+                    )}
+                    
+                    <button onClick={onBack} className="text-gray-400 text-sm underline mt-4">ย้อนกลับ</button>
+                </div>
+            );
+        }
+
+        function GameEngine({ mode, botDifficulty, fb, roomId, isHost, user, onGameOver }) {
+            const [currentQ, setCurrentQ] = useState(null);
+            const [options, setOptions] = useState([]);
+            const [timeLeft, setTimeLeft] = useState(10);
+            const [myScore, setMyScore] = useState(0);
+            const [opScore, setOpScore] = useState(0);
+            const [feedback, setFeedback] = useState(null); // 'correct', 'wrong'
+            const [gameActive, setGameActive] = useState(true);
+            const botIntervalRef = useRef(null);
+            
+            // Generate Question
+            const nextQuestion = () => {
+                const target = VOCAB_DATA[Math.floor(Math.random() * VOCAB_DATA.length)];
+                let distractors = VOCAB_DATA.filter(v => v.id !== target.id)
+                                            .sort(() => 0.5 - Math.random())
+                                            .slice(0, 2);
+                let allOptions = [target, ...distractors].sort(() => 0.5 - Math.random());
+                
+                setCurrentQ(target);
+                setOptions(allOptions);
+                setTimeLeft(10); // Reset timer
+            };
+
+            // Initial Start
+            useEffect(() => {
+                nextQuestion();
+                
+                // Bot Logic
+                if (mode === 'bot') {
+                    let intervalTime = 3000;
+                    let winChance = 0.5; // Medium
+
+                    if (botDifficulty === 'easy') {
+                        intervalTime = 4000; 
+                        winChance = 0.3; 
+                    } else if (botDifficulty === 'hard') {
+                        intervalTime = 2000; 
+                        winChance = 0.7; 
+                    }
+
+                    botIntervalRef.current = setInterval(() => {
+                        if (!gameActive) return;
+                        
+                        if (Math.random() < winChance) {
+                            setOpScore(prev => {
+                                const newScore = prev + 1;
+                                if (newScore >= 10) endGame(myScore, 10);
+                                return newScore;
+                            });
+                        }
+                    }, intervalTime);
+                }
+
+                return () => {
+                    if (botIntervalRef.current) clearInterval(botIntervalRef.current);
+                };
+            }, [botDifficulty]);
+
+            // Timer Logic
+            useEffect(() => {
+                if (!gameActive) return;
+                if (timeLeft <= 0) {
+                    handleAnswer(null, false); 
+                    return;
+                }
+                const timer = setTimeout(() => setTimeLeft(t => t - 1), 1000);
+                return () => clearTimeout(timer);
+            }, [timeLeft, gameActive]);
+
+            // Sync Score for Online Mode
+            useEffect(() => {
+                if (mode === 'online' && fb && roomId) {
+                    const { doc, onSnapshot, updateDoc } = window.firebaseModules;
+                    const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
+                    const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+
+                    // Listen to room updates
+                    const unsub = onSnapshot(roomRef, (snap) => {
+                        const data = snap.data();
+                        if (!data) return;
+
+                        const newMyScore = isHost ? data.p1Score : data.p2Score;
+                        const newOpScore = isHost ? data.p2Score : data.p1Score;
+
+                        setOpScore(newOpScore);
+
+                        if (newMyScore >= 10) endGame(10, newOpScore);
+                        if (newOpScore >= 10) endGame(newMyScore, 10);
+                    });
+
+                    return () => unsub();
+                }
+            }, [mode, fb, roomId]);
+
+            const endGame = (finalMy, finalOp) => {
+                setGameActive(false);
+                onGameOver(finalMy, finalOp);
+            };
+
+            const updateOnlineScore = async (newScore) => {
+                if (mode !== 'online') return;
+                const { doc, updateDoc } = window.firebaseModules;
+                const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
+                const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
+                
+                try {
+                    await updateDoc(roomRef, {
+                        [isHost ? 'p1Score' : 'p2Score']: newScore
+                    });
+                } catch(e) {
+                    console.error("Score update failed", e);
+                }
+            };
+
+            const handleAnswer = (selected, isCorrect) => {
+                if (!gameActive) return;
+
+                if (isCorrect) {
+                    setFeedback('correct');
+                    const newScore = myScore + 1;
+                    setMyScore(newScore);
+                    if (mode === 'online') updateOnlineScore(newScore);
+
+                    if (newScore >= 10) {
+                        endGame(newScore, opScore);
+                        return;
+                    }
+                } else {
+                    setFeedback('wrong');
+                }
+
+                setTimeout(() => {
+                    setFeedback(null);
+                    nextQuestion();
+                }, 800);
+            };
+
+            if (!currentQ) return <div className="p-10 text-center">Loading...</div>;
+
+            return (
+                <div className="relative h-full flex flex-col">
+                    {/* Score Board */}
+                    <div className="flex justify-between items-end mb-4 bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+                        <div className="text-center w-16">
+                            <div className="text-xs font-bold text-gray-400">คุณ</div>
+                            <div className="text-3xl font-black text-blue-500">{myScore}</div>
+                        </div>
+                        <div className="text-center flex-1 px-4 pb-2">
+                             <div className="text-xs text-gray-400 mb-1">เป้าหมาย: 10 คะแนน</div>
+                             <div className="h-2 bg-gray-100 rounded-full overflow-hidden flex">
+                                <div style={{width: `${(myScore/10)*100}%`}} className="h-full bg-blue-500 transition-all duration-500"></div>
+                                <div style={{width: `${(opScore/10)*100}%`}} className="h-full bg-red-500 transition-all duration-500"></div>
+                             </div>
+                        </div>
+                        <div className="text-center w-16">
+                            <div className="text-xs font-bold text-gray-400">{mode === 'bot' ? 'บอท' : 'เพื่อน'}</div>
+                            <div className="text-3xl font-black text-red-500">{opScore}</div>
+                        </div>
+                    </div>
+
+                    {/* Timer Bar */}
+                    <div className="w-full bg-gray-200 h-2 rounded-full mb-6 overflow-hidden">
+                        <div 
+                            className={`h-full transition-all duration-1000 linear ${timeLeft < 4 ? 'bg-red-500' : 'bg-green-500'}`}
+                            style={{width: `${(timeLeft/10)*100}%`}}
+                        ></div>
+                    </div>
+
+                    {/* Question Area */}
+                    <div className="flex-1 flex flex-col items-center justify-center mb-6 relative">
+                        {feedback && (
+                            <div className={`absolute inset-0 z-10 flex items-center justify-center text-6xl animate-bounce ${feedback === 'correct' ? 'opacity-100' : 'opacity-100'}`}>
+                                {feedback === 'correct' ? '✅' : '❌'}
+                            </div>
+                        )}
+                        
+                        <div className="text-8xl mb-4 emoji-float drop-shadow-lg">
+                            {currentQ.emoji}
+                        </div>
+                        <h2 className="text-4xl font-bold text-gray-800">{currentQ.thai}</h2>
+                        <span className="text-sm text-indigo-400 bg-indigo-50 px-2 py-1 rounded-md mt-2">หมวด: {currentQ.category}</span>
+                    </div>
+
+                    {/* Options */}
+                    <div className="grid grid-cols-1 gap-3">
+                        {options.map((opt, idx) => (
+                            <button
+                                key={idx}
+                                onClick={() => handleAnswer(opt, opt.id === currentQ.id)}
+                                className="bg-white border-2 border-b-4 border-indigo-100 hover:border-indigo-400 hover:bg-indigo-50 text-gray-700 font-bold py-4 rounded-xl text-xl transition-all active:border-b-2 active:translate-y-[2px]"
+                            >
+                                {opt.word}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        function ResultScreen({ result, score, onRestart }) {
+            const isWin = result === 'win';
+            return (
+                <div className="text-center py-8">
+                    <div className="text-8xl mb-6 animate-pulse">
+                        {isWin ? '🏆' : (result === 'draw' ? '🤝' : '😿')}
+                    </div>
+                    
+                    <h2 className={`text-4xl font-black mb-2 ${isWin ? 'text-green-500' : 'text-gray-600'}`}>
+                        {isWin ? 'YOU WIN!' : (result === 'draw' ? 'เสมอ!' : 'GAME OVER')}
+                    </h2>
+                    
+                    <p className="text-gray-500 mb-8">
+                        {isWin ? 'เก่งมากๆ เลยนะ!' : 'พยายามใหม่อีกครั้งนะ!'}
+                    </p>
+
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-8 mx-auto max-w-[200px]">
+                        <div className="flex justify-between mb-2">
+                            <span>คุณ</span>
+                            <span className="font-bold text-blue-500">{score.p1}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>คู่แข่ง</span>
+                            <span className="font-bold text-red-500">{score.p2}</span>
+                        </div>
+                    </div>
+
+                    <button 
+                        onClick={onRestart}
+                        className="bg-indigo-600 text-white font-bold py-3 px-8 rounded-full shadow-lg hover:bg-indigo-700 transition transform hover:-translate-y-1"
+                    >
+                        เล่นอีกครั้ง
+                    </button>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
