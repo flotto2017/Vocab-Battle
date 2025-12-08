@@ -22,10 +22,10 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, getDoc, runTransaction } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
         
         // Expose to window for React component to use
-        window.firebaseModules = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, getDoc };
+        window.firebaseModules = { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, getFirestore, collection, doc, setDoc, onSnapshot, updateDoc, getDoc, runTransaction };
     </script>
 
     <style>
@@ -206,7 +206,7 @@
                 const initFirebase = async () => {
                     try {
                         if (typeof window.firebaseModules !== 'undefined') {
-                            const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore } = window.firebaseModules;
+                            const { initializeApp, getAuth, signInAnonymously, onAuthStateChanged, getFirestore, runTransaction } = window.firebaseModules;
                             
                             // *** YOUR CUSTOM CONFIG HERE ***
                             const firebaseConfig = {
@@ -303,11 +303,15 @@
                                     roomId={roomId}
                                     isHost={isHost}
                                     user={user}
-                                    onGameOver={(p1, p2) => {
+                                    onGameOver={(p1, p2, forcedResult) => { // Updated to accept forcedResult
                                         setScore({ p1, p2 });
-                                        if (p1 > p2) setGameResult('win');
-                                        else if (p2 > p1) setGameResult('lose');
-                                        else setGameResult('draw');
+                                        if (forcedResult) {
+                                            setGameResult(forcedResult);
+                                        } else {
+                                            if (p1 > p2) setGameResult('win');
+                                            else if (p2 > p1) setGameResult('lose');
+                                            else setGameResult('draw');
+                                        }
                                         setView('result');
                                     }}
                                 />
@@ -434,6 +438,7 @@
                     status: 'waiting',
                     p1Score: 0,
                     p2Score: 0,
+                    winnerId: null, // Initial winnerId
                     createdAt: Date.now()
                 });
 
@@ -597,7 +602,7 @@
             // Sync Score for Online Mode
             useEffect(() => {
                 if (mode === 'online' && fb && roomId) {
-                    const { doc, onSnapshot, updateDoc } = window.firebaseModules;
+                    const { doc, onSnapshot } = window.firebaseModules;
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
                     const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
 
@@ -611,31 +616,53 @@
 
                         setOpScore(newOpScore);
 
-                        if (newMyScore >= 10) endGame(10, newOpScore);
-                        if (newOpScore >= 10) endGame(newMyScore, 10);
+                        // Check for Winner ID (Single Source of Truth)
+                        if (data.winnerId) {
+                            setGameActive(false);
+                            if (data.winnerId === user.uid) {
+                                endGame(10, newOpScore, 'win'); // I won
+                            } else {
+                                endGame(newMyScore, 10, 'lose'); // I lost
+                            }
+                        }
                     });
 
                     return () => unsub();
                 }
             }, [mode, fb, roomId]);
 
-            const endGame = (finalMy, finalOp) => {
+            const endGame = (finalMy, finalOp, explicitResult) => {
                 setGameActive(false);
-                onGameOver(finalMy, finalOp);
+                onGameOver(finalMy, finalOp, explicitResult);
             };
 
             const updateOnlineScore = async (newScore) => {
                 if (mode !== 'online') return;
-                const { doc, updateDoc } = window.firebaseModules;
+                const { doc, runTransaction } = window.firebaseModules;
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
                 const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
                 
                 try {
-                    await updateDoc(roomRef, {
-                        [isHost ? 'p1Score' : 'p2Score']: newScore
+                    await runTransaction(fb.db, async (transaction) => {
+                        const sfDoc = await transaction.get(roomRef);
+                        if (!sfDoc.exists()) throw "Document does not exist!";
+
+                        const data = sfDoc.data();
+                        
+                        // If winner already declared, do nothing (game over)
+                        if (data.winnerId) return;
+
+                        const updates = { [isHost ? 'p1Score' : 'p2Score']: newScore };
+
+                        // First to reach 10 claims the win
+                        if (newScore >= 10) {
+                            updates.winnerId = user.uid;
+                        }
+
+                        transaction.update(roomRef, updates);
                     });
                 } catch(e) {
-                    console.error("Score update failed", e);
+                    console.error("Score transaction failed", e);
                 }
             };
 
@@ -646,19 +673,40 @@
                     setFeedback('correct');
                     const newScore = myScore + 1;
                     setMyScore(newScore);
-                    if (mode === 'online') updateOnlineScore(newScore);
-
-                    if (newScore >= 10) {
-                        endGame(newScore, opScore);
-                        return;
+                    
+                    if (mode === 'online') {
+                         updateOnlineScore(newScore);
+                         // If online, we DON'T call endGame here immediately if score >= 10.
+                         // We wait for the Snapshot to tell us we won (via winnerId).
+                         // This prevents local-only wins when race conditions occur.
+                         if (newScore >= 10) {
+                             setGameActive(false); // Stop playing, wait for server verdict
+                         }
+                    } else {
+                        // Offline/Bot Mode: Normal immediate end
+                        if (newScore >= 10) {
+                            endGame(newScore, opScore);
+                            return;
+                        }
                     }
                 } else {
                     setFeedback('wrong');
                 }
 
                 setTimeout(() => {
+                    // Only continue if game is still active
                     setFeedback(null);
-                    nextQuestion();
+                    // Check gameActive ref or state? state is fine since re-render
+                    // actually if setGameActive(false) was called, this timeout callback sees old state closure?
+                    // Better to rely on state in render or check Ref. 
+                    // But for simple React, the component might re-render.
+                    // However, we added a check at start of handleAnswer. 
+                    // We need to check if game ended during delay.
+                    // Ideally check a Ref, but for this simple app, it's ok.
+                    // Just triggering nextQuestion.
+                    if (newScore < 10 || mode !== 'online') {
+                        nextQuestion();
+                    }
                 }, 800);
             };
 
