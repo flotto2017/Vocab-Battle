@@ -66,6 +66,13 @@
         }
         .animate-pulse-fast { animation: pulse-fast 0.8s infinite; }
 
+        @keyframes zoom-in-out {
+            0% { transform: scale(0); opacity: 0; }
+            50% { transform: scale(1.2); opacity: 1; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+        .animate-zoom-text { animation: zoom-in-out 0.5s ease-out forwards; }
+
         .bg-pattern {
             background-image: radial-gradient(#e0e7ff 2px, transparent 2px);
             background-size: 20px 20px;
@@ -119,6 +126,13 @@
                 [392, 370, 349, 329].forEach((f, i) => {
                     setTimeout(() => SoundManager.playTone(f, 'sawtooth', 0.4, 0.1), i * 400);
                 });
+            },
+            // NEW: Sounds for Ready... Start!
+            playReady: () => {
+                SoundManager.playTone(440, 'sine', 0.1, 0.2); // Low beep
+            },
+            playGo: () => {
+                SoundManager.playTone(880, 'square', 0.3, 0.2); // High beep
             },
             bgmOsc: null,
             bgmInterval: null,
@@ -651,12 +665,31 @@
             const [myScore, setMyScore] = useState(0);
             const [opScore, setOpScore] = useState(0);
             const [feedback, setFeedback] = useState(null); 
-            const [gameActive, setGameActive] = useState(true);
+            const [gameActive, setGameActive] = useState(false); // Changed to false initially
             const [elapsedTime, setElapsedTime] = useState(0); 
+            const [startPhase, setStartPhase] = useState('ready'); // ready, go, null
             
             const botIntervalRef = useRef(null);
             const startTimeRef = useRef(Date.now()); 
             const timerRef = useRef(null);
+
+            // START SEQUENCE
+            useEffect(() => {
+                const startSequence = async () => {
+                    await new Promise(r => setTimeout(r, 500));
+                    SoundManager.playReady();
+                    setStartPhase('ready');
+                    
+                    await new Promise(r => setTimeout(r, 1000));
+                    SoundManager.playGo();
+                    setStartPhase('go');
+                    
+                    await new Promise(r => setTimeout(r, 800));
+                    setStartPhase(null);
+                    setGameActive(true); // Game Starts Here
+                };
+                startSequence();
+            }, []);
 
             // BGM Logic: Intense if anyone has >= 7 points
             useEffect(() => {
@@ -669,8 +702,9 @@
             }, [myScore, opScore, gameActive]);
 
             useEffect(() => {
-                SoundManager.startBgm();
                 if (gameActive) {
+                    SoundManager.startBgm();
+                    startTimeRef.current = Date.now(); // Reset timer when active
                     timerRef.current = setInterval(() => { setElapsedTime(((Date.now() - startTimeRef.current) / 1000).toFixed(1)); }, 100);
                 }
                 return () => { clearInterval(timerRef.current); SoundManager.stopBgm(); };
@@ -686,10 +720,9 @@
             };
 
             useEffect(() => {
-                startTimeRef.current = Date.now(); 
                 nextQuestion();
                 
-                if (mode === 'bot') {
+                if (mode === 'bot' && gameActive) {
                     let intervalTime = 3000;
                     let winChance = 0.5; 
                     if (botDifficulty === 'easy') { intervalTime = 4000; winChance = 0.3; } 
@@ -707,7 +740,7 @@
                     }, intervalTime);
                 }
                 return () => { if (botIntervalRef.current) clearInterval(botIntervalRef.current); };
-            }, [botDifficulty]);
+            }, [botDifficulty, gameActive]); // Added gameActive dependency
 
             useEffect(() => {
                 if (!gameActive) return;
@@ -717,7 +750,7 @@
             }, [timeLeft, gameActive]);
 
             useEffect(() => {
-                if (mode === 'online' && fb && roomId) {
+                if (mode === 'online' && fb && roomId && gameActive) {
                     const { doc, onSnapshot } = window.firebaseModules;
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
                     const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
@@ -737,7 +770,7 @@
                     });
                     return () => unsub();
                 }
-            }, [mode, fb, roomId]);
+            }, [mode, fb, roomId, gameActive]);
 
             const endGame = (finalMy, finalOp, explicitResult, finalTimes) => {
                 setGameActive(false);
@@ -806,6 +839,16 @@
 
             return (
                 <div className={`relative h-full flex flex-col transition-colors duration-1000 ${isIntense ? 'bg-red-50' : ''}`}>
+                    {/* START OVERLAY */}
+                    {startPhase && (
+                        <div className="absolute inset-0 z-50 bg-black/50 flex items-center justify-center backdrop-blur-sm rounded-3xl">
+                            <div className="text-center">
+                                {startPhase === 'ready' && <div className="text-6xl font-black text-white animate-pulse">Ready...</div>}
+                                {startPhase === 'go' && <div className="text-8xl font-black text-yellow-400 animate-zoom-text drop-shadow-[0_5px_5px_rgba(0,0,0,0.5)]">START!!</div>}
+                            </div>
+                        </div>
+                    )}
+
                     {isIntense && <div className="absolute inset-0 pointer-events-none border-4 border-red-300 animate-pulse-fast rounded-xl z-0 opacity-50"></div>}
                     
                     {/* Score Board */}
