@@ -545,6 +545,7 @@
             const [feedback, setFeedback] = useState(null); 
             const [gameActive, setGameActive] = useState(true);
             const [elapsedTime, setElapsedTime] = useState(0); // Show current timer
+            const usedQuestionsRef = useRef(new Set()); // FIXED: To track used questions
             
             const botIntervalRef = useRef(null);
             const startTimeRef = useRef(Date.now()); // Capture start time
@@ -562,7 +563,19 @@
             
             // Generate Question
             const nextQuestion = () => {
-                const target = VOCAB_DATA[Math.floor(Math.random() * VOCAB_DATA.length)];
+                // FIXED: Filter out used questions
+                const availableWords = VOCAB_DATA.filter(word => !usedQuestionsRef.current.has(word.id));
+                
+                // If all words used, reset pool (or could just reuse all if needed)
+                let pool = availableWords;
+                if (pool.length === 0) {
+                     pool = VOCAB_DATA;
+                     usedQuestionsRef.current.clear();
+                }
+
+                const target = pool[Math.floor(Math.random() * pool.length)];
+                usedQuestionsRef.current.add(target.id); // Mark as used
+
                 let distractors = VOCAB_DATA.filter(v => v.id !== target.id)
                                             .sort(() => 0.5 - Math.random())
                                             .slice(0, 2);
@@ -666,7 +679,9 @@
                 // If offline/bot, calculate time locally
                 if (!finalTimes && mode === 'bot') {
                      const myFinishTime = (Date.now() - startTimeRef.current) / 1000;
-                     finalTimes = { p1: myFinishTime, p2: 0 }; // Bot time irrelevant mostly
+                     // FIXED: Generate realistic bot time for display
+                     const botTime = myFinishTime * (0.8 + Math.random() * 0.4); 
+                     finalTimes = { p1: myFinishTime, p2: botTime };
                 }
                 onGameOver(finalMy, finalOp, explicitResult, finalTimes);
             };
@@ -802,6 +817,8 @@
 
         function ResultScreen({ result, score, times, onRestart }) {
             const isWin = result === 'win';
+            const formatTime = (t) => (t !== undefined && t !== null) ? Number(t).toFixed(2) + ' วินาที' : '-';
+
             return (
                 <div className="text-center py-8">
                     <div className="text-8xl mb-6 animate-pulse">
@@ -820,20 +837,20 @@
                         <div className="grid grid-cols-3 gap-2 text-sm border-b pb-2 mb-2 font-bold text-gray-400">
                             <div>ผู้เล่น</div>
                             <div>คะแนน</div>
-                            <div>เวลา (วิ)</div>
+                            <div>เวลา</div>
                         </div>
                         <div className="grid grid-cols-3 gap-2 mb-3 items-center">
                             <div className="font-bold text-blue-500 text-left">คุณ</div>
                             <div className="font-black text-xl">{score.p1}</div>
-                            <div className="text-gray-600 bg-gray-100 rounded px-2 py-1">
-                                {times && times.p1 ? Number(times.p1).toFixed(2) : '-'}s
+                            <div className="text-gray-600 bg-gray-100 rounded px-2 py-1 text-sm">
+                                {formatTime(times?.p1)}
                             </div>
                         </div>
                         <div className="grid grid-cols-3 gap-2 items-center">
                             <div className="font-bold text-red-500 text-left">คู่แข่ง</div>
                             <div className="font-black text-xl">{score.p2}</div>
-                            <div className="text-gray-600 bg-gray-100 rounded px-2 py-1">
-                                {times && times.p2 ? Number(times.p2).toFixed(2) : '-'}s
+                            <div className="text-gray-600 bg-gray-100 rounded px-2 py-1 text-sm">
+                                {formatTime(times?.p2)}
                             </div>
                         </div>
                     </div>
