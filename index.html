@@ -358,7 +358,7 @@
                                     roomId={roomId}
                                     isHost={isHost}
                                     user={user}
-                                    usedQuestionsSet={globalUsedQuestions} // PASS THIS REF DOWN
+                                    usedQuestionsSet={globalUsedQuestions} 
                                     onGameOver={(p1, p2, forcedResult, times) => { 
                                         setScore({ p1, p2 });
                                         if (times) setGameTimes(times);
@@ -902,32 +902,40 @@
             };
 
             const handleAnswer = (selected, isCorrect) => {
-                if (!gameActive) return;
+                if (!gameActive || feedback) return; // Prevent spamming
+
+                let nextScore = myScore;
+                const currentDuration = (Date.now() - startTimeRef.current) / 1000;
 
                 if (isCorrect) {
                     setFeedback('correct');
-                    const newScore = myScore + 1;
-                    setMyScore(newScore);
+                    nextScore = myScore + 1;
+                    setMyScore(nextScore);
                     
-                    const currentDuration = (Date.now() - startTimeRef.current) / 1000;
-
                     if (mode === 'online') {
-                         updateOnlineScore(newScore, currentDuration);
-                         if (newScore >= 10) {
+                         updateOnlineScore(nextScore, currentDuration);
+                         if (nextScore >= 10) {
                              setGameActive(false); 
                          }
                     } else {
-                        if (newScore >= 10) {
-                            endGame(newScore, opScore);
+                        if (nextScore >= 10) {
+                            endGame(nextScore, opScore);
                             return;
                         }
                     }
                 } else {
                     setFeedback('wrong');
+                    nextScore = myScore - 1; // Penalty for wrong answer
+                    setMyScore(nextScore);
+
+                    if (mode === 'online') {
+                        updateOnlineScore(nextScore, currentDuration);
+                    }
                 }
 
                 setTimeout(() => {
-                    if (newScore < 10 || mode !== 'online') {
+                    setFeedback(null);
+                    if (nextScore < 10 || mode !== 'online') {
                         nextQuestion();
                     }
                 }, 800);
@@ -949,8 +957,8 @@
                                 <span className="font-mono text-indigo-500">⏱ {elapsedTime}s</span>
                              </div>
                              <div className="h-2 bg-gray-100 rounded-full overflow-hidden flex">
-                                <div style={{width: `${(myScore/10)*100}%`}} className="h-full bg-blue-500 transition-all duration-500"></div>
-                                <div style={{width: `${(opScore/10)*100}%`}} className="h-full bg-red-500 transition-all duration-500"></div>
+                                <div style={{width: `${Math.max(0, (myScore/10)*100)}%`}} className="h-full bg-blue-500 transition-all duration-500"></div>
+                                <div style={{width: `${Math.max(0, (opScore/10)*100)}%`}} className="h-full bg-red-500 transition-all duration-500"></div>
                              </div>
                         </div>
                         <div className="text-center w-20">
@@ -987,8 +995,9 @@
                         {options.map((opt, idx) => (
                             <button
                                 key={idx}
+                                disabled={feedback !== null}
                                 onClick={() => handleAnswer(opt, opt.id === currentQ.id)}
-                                className="bg-white border-2 border-b-4 border-indigo-100 hover:border-indigo-400 hover:bg-indigo-50 text-gray-700 font-bold py-4 rounded-xl text-xl transition-all active:border-b-2 active:translate-y-[2px]"
+                                className={`bg-white border-2 border-b-4 border-indigo-100 hover:border-indigo-400 hover:bg-indigo-50 text-gray-700 font-bold py-4 rounded-xl text-xl transition-all active:border-b-2 active:translate-y-[2px] ${feedback !== null ? 'cursor-not-allowed opacity-80' : ''}`}
                             >
                                 {opt.word}
                             </button>
