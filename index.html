@@ -733,7 +733,6 @@
                         if (Math.random() < winChance) {
                             setOpScore(prev => {
                                 const newScore = prev + 1;
-                                if (newScore >= 10) endGame(myScore, 10);
                                 return newScore;
                             });
                         }
@@ -742,6 +741,21 @@
                 return () => { if (botIntervalRef.current) clearInterval(botIntervalRef.current); };
             }, [botDifficulty, gameActive]); // Added gameActive dependency
 
+            // Game End Logic (Effect based to avoid render-update loops)
+            useEffect(() => {
+                if (mode === 'bot' && gameActive) {
+                    if (myScore >= 10 || opScore >= 10) {
+                        // Calculate time
+                        const myFinishTime = (Date.now() - startTimeRef.current) / 1000;
+                        const botTime = myFinishTime * (0.8 + Math.random() * 0.4); 
+                        const finalTimes = { p1: myFinishTime, p2: botTime };
+                        
+                        setGameActive(false);
+                        onGameOver(myScore, opScore, myScore > opScore ? 'win' : 'lose', finalTimes);
+                    }
+                }
+            }, [myScore, opScore, mode, gameActive]);
+
             useEffect(() => {
                 if (!gameActive) return;
                 if (timeLeft <= 0) { handleAnswer(null, false); return; }
@@ -749,8 +763,9 @@
                 return () => clearTimeout(timer);
             }, [timeLeft, gameActive]);
 
+            // FIXED: Removed 'gameActive' from useEffect dependency to prevent snapshot detachment
             useEffect(() => {
-                if (mode === 'online' && fb && roomId && gameActive) {
+                if (mode === 'online' && fb && roomId) {
                     const { doc, onSnapshot } = window.firebaseModules;
                     const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
                     const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', roomId);
@@ -770,7 +785,7 @@
                     });
                     return () => unsub();
                 }
-            }, [mode, fb, roomId, gameActive]);
+            }, [mode, fb, roomId]);
 
             const endGame = (finalMy, finalOp, explicitResult, finalTimes) => {
                 setGameActive(false);
@@ -816,8 +831,6 @@
                     if (mode === 'online') {
                          updateOnlineScore(nextScore, currentDuration);
                          if (nextScore >= 10) { setGameActive(false); }
-                    } else {
-                        if (nextScore >= 10) { endGame(nextScore, opScore); return; }
                     }
                 } else {
                     SoundManager.playWrong();
