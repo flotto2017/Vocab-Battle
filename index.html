@@ -127,29 +127,26 @@
                     setTimeout(() => SoundManager.playTone(f, 'sawtooth', 0.4, 0.1), i * 400);
                 });
             },
-            // NEW: Sounds for Ready... Start!
             playReady: () => {
-                SoundManager.playTone(440, 'sine', 0.1, 0.2); // Low beep
+                SoundManager.playTone(440, 'sine', 0.1, 0.2); 
             },
             playGo: () => {
-                SoundManager.playTone(880, 'square', 0.3, 0.2); // High beep
+                SoundManager.playTone(880, 'square', 0.3, 0.2); 
             },
             bgmOsc: null,
             bgmInterval: null,
             isPlayingBgm: false,
             startBgm: (intensity = 'normal') => {
-                if (SoundManager.isPlayingBgm) return; // Prevent double play
+                if (SoundManager.isPlayingBgm) return;
                 SoundManager.isPlayingBgm = true;
                 
                 let noteIndex = 0;
-                // Simple happy melody C-E-G-A pattern
                 const melody = [261.63, 329.63, 392.00, 440.00]; 
-                let speed = intensity === 'fast' ? 200 : 400; // Speed up if intense
+                let speed = intensity === 'fast' ? 200 : 400; 
 
                 SoundManager.bgmInterval = setInterval(() => {
                     if (audioCtx.state === 'suspended') audioCtx.resume();
                     const freq = melody[noteIndex % melody.length];
-                    // Play very soft background blips
                     SoundManager.playTone(freq, 'sine', 0.1, 0.02);
                     noteIndex++;
                 }, speed);
@@ -290,6 +287,7 @@
             const [view, setView] = useState(savedName ? 'menu' : 'login'); 
             
             const [mode, setMode] = useState(null); 
+            const [gameType, setGameType] = useState('quiz'); // 'quiz' or 'spelling'
             const [botDifficulty, setBotDifficulty] = useState('medium'); 
             const [score, setScore] = useState({ p1: 0, p2: 0 });
             const [gameTimes, setGameTimes] = useState({ p1: 0, p2: 0 }); 
@@ -431,7 +429,9 @@
                                     onSelectMode={(m) => {
                                         playClick();
                                         setMode(m);
-                                        if (m === 'bot') setView('difficulty_select'); 
+                                        if (m === 'bot') {
+                                            setView('game_type_select'); // CHANGED: Go to game type select
+                                        }
                                         if (m === 'online') setView('lobby');
                                         if (m === 'leaderboard') setView('leaderboard');
                                     }}
@@ -444,6 +444,17 @@
                                 <LeaderboardScreen 
                                     fb={fbInstance} 
                                     onBack={() => { playClick(); setView('menu'); }} 
+                                />
+                            )}
+
+                            {view === 'game_type_select' && (
+                                <GameTypeSelect
+                                    onSelect={(type) => {
+                                        playClick();
+                                        setGameType(type);
+                                        setView('difficulty_select');
+                                    }}
+                                    onBack={() => { playClick(); setView('menu'); }}
                                 />
                             )}
 
@@ -462,9 +473,10 @@
                                 <Lobby 
                                     fb={fbInstance} 
                                     user={user} 
-                                    onGameStart={(room, host) => {
+                                    onGameStart={(room, host, type) => {
                                         setRoomId(room);
                                         setIsHost(host);
+                                        setGameType(type || 'quiz');
                                         setView('game');
                                     }}
                                     onBack={() => { playClick(); setView('menu'); }}
@@ -474,6 +486,7 @@
                             {view === 'game' && (
                                 <GameEngine 
                                     mode={mode}
+                                    gameType={gameType}
                                     botDifficulty={botDifficulty} 
                                     fb={fbInstance}
                                     roomId={roomId}
@@ -614,6 +627,24 @@
             );
         }
 
+        // NEW: GameTypeSelect Component
+        function GameTypeSelect({ onSelect, onBack }) {
+            return (
+                <div className="space-y-4 text-center">
+                    <div className="py-4"><h2 className="text-xl font-bold text-gray-700">เลือกเกมที่อยากเล่น</h2></div>
+                    <button onClick={() => onSelect('quiz')} className="w-full bg-blue-100 hover:bg-blue-200 text-blue-800 font-bold py-4 px-6 rounded-2xl shadow-sm card-bounce flex items-center gap-3 border-2 border-blue-200">
+                        <span className="text-3xl">🦁</span>
+                        <div className="text-left"><div className="text-lg">ตอบคำถาม (Quiz)</div><div className="text-xs opacity-70">เลือกคำศัพท์ให้ตรงกับภาพ</div></div>
+                    </button>
+                    <button onClick={() => onSelect('spelling')} className="w-full bg-purple-100 hover:bg-purple-200 text-purple-800 font-bold py-4 px-6 rounded-2xl shadow-sm card-bounce flex items-center gap-3 border-2 border-purple-200">
+                        <span className="text-3xl">🔠</span>
+                        <div className="text-left"><div className="text-lg">เรียงอักษร (Spelling)</div><div className="text-xs opacity-70">เรียงตัวอักษรให้ถูกต้อง</div></div>
+                    </button>
+                    <button onClick={onBack} className="text-gray-400 text-sm underline mt-4">ย้อนกลับ</button>
+                </div>
+            );
+        }
+
         function DifficultySelect({ onSelect, onBack }) {
             return (
                 <div className="space-y-4 text-center">
@@ -630,6 +661,7 @@
             const [roomCode, setRoomCode] = useState("");
             const [status, setStatus] = useState("init");
             const [generatedCode, setGeneratedCode] = useState("");
+            const [selectedGameType, setSelectedGameType] = useState("quiz"); // Default quiz
             const { doc, setDoc, onSnapshot, updateDoc, getDoc } = window.firebaseModules;
             const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
 
@@ -640,10 +672,20 @@
                 setGeneratedCode(code);
                 setStatus("waiting");
                 const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', `room_${code}`);
-                await setDoc(roomRef, { hostId: user.uid, guestId: null, status: 'waiting', p1Score: 0, p2Score: 0, p1Time: 0, p2Time: 0, winnerId: null, createdAt: Date.now() });
+                await setDoc(roomRef, { 
+                    hostId: user.uid, 
+                    guestId: null, 
+                    status: 'waiting', 
+                    gameType: selectedGameType, // Save game type
+                    p1Score: 0, p2Score: 0, p1Time: 0, p2Time: 0, winnerId: null, createdAt: Date.now() 
+                });
                 const unsub = onSnapshot(roomRef, (snapshot) => {
                     const data = snapshot.data();
-                    if (data && data.guestId) { unsub(); updateDoc(roomRef, { status: 'playing' }); onGameStart(`room_${code}`, true); }
+                    if (data && data.guestId) { 
+                        unsub(); 
+                        updateDoc(roomRef, { status: 'playing' }); 
+                        onGameStart(`room_${code}`, true, selectedGameType); 
+                    }
                 });
             };
 
@@ -654,8 +696,9 @@
                 const roomRef = doc(fb.db, 'artifacts', appId, 'public', 'data', 'rooms', `room_${roomCode}`);
                 const snap = await getDoc(roomRef);
                 if (snap.exists() && snap.data().status === 'waiting') {
+                    const data = snap.data();
                     await updateDoc(roomRef, { guestId: user.uid, status: 'ready' });
-                    onGameStart(`room_${roomCode}`, false);
+                    onGameStart(`room_${roomCode}`, false, data.gameType); // Read game type
                 } else { setStatus("init"); alert("ไม่พบห้องหรือห้องเต็มแล้ว"); }
             };
 
@@ -664,29 +707,64 @@
                     <h2 className="text-xl font-bold text-gray-700">ห้องพักนักสู้</h2>
                     {status === 'init' && (
                         <div className="space-y-4">
-                            <div className="bg-blue-50 p-4 rounded-xl"><p className="mb-2 text-sm text-gray-600">มีรหัสห้องเพื่อนไหม?</p><div className="flex gap-2"><input type="number" maxLength="4" placeholder="1234" className="w-full text-center text-2xl tracking-widest p-2 border-2 border-blue-200 rounded-lg focus:border-blue-500 outline-none" value={roomCode} onChange={(e) => setRoomCode(e.target.value)} /><button onClick={joinRoom} className="bg-blue-500 text-white px-4 rounded-lg font-bold">เข้า</button></div></div>
-                            <div className="relative"><div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300"></div></div><div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">หรือ</span></div></div>
-                            <button onClick={createRoom} className="w-full bg-indigo-500 text-white py-3 rounded-xl font-bold shadow-md hover:bg-indigo-600">สร้างห้องใหม่</button>
+                            <div className="bg-blue-50 p-4 rounded-xl">
+                                <p className="mb-2 text-sm text-gray-600">มีรหัสห้องเพื่อนไหม?</p>
+                                <div className="flex gap-2">
+                                    <input type="number" maxLength="4" placeholder="1234" className="w-full text-center text-2xl tracking-widest p-2 border-2 border-blue-200 rounded-lg focus:border-blue-500 outline-none" value={roomCode} onChange={(e) => setRoomCode(e.target.value)} />
+                                    <button onClick={joinRoom} className="bg-blue-500 text-white px-4 rounded-lg font-bold">เข้า</button>
+                                </div>
+                            </div>
+                            
+                            <div className="relative"><div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-300"></div></div><div className="relative flex justify-center text-sm"><span className="px-2 bg-white text-gray-500">หรือ สร้างห้อง</span></div></div>
+                            
+                            {/* Game Mode Selector for Host */}
+                            <div className="grid grid-cols-2 gap-2 p-1 bg-gray-100 rounded-lg">
+                                <button 
+                                    onClick={() => setSelectedGameType('quiz')}
+                                    className={`py-2 text-sm font-bold rounded-md transition-colors ${selectedGameType === 'quiz' ? 'bg-white shadow text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+                                >
+                                    ตอบคำถาม 🦁
+                                </button>
+                                <button 
+                                    onClick={() => setSelectedGameType('spelling')}
+                                    className={`py-2 text-sm font-bold rounded-md transition-colors ${selectedGameType === 'spelling' ? 'bg-white shadow text-purple-600' : 'text-gray-400 hover:text-gray-600'}`}
+                                >
+                                    เรียงอักษร 🔠
+                                </button>
+                            </div>
+
+                            <button onClick={createRoom} className={`w-full text-white py-3 rounded-xl font-bold shadow-md transition hover:-translate-y-1 ${selectedGameType === 'quiz' ? 'bg-blue-500 hover:bg-blue-600' : 'bg-purple-500 hover:bg-purple-600'}`}>
+                                สร้างห้อง ({selectedGameType === 'quiz' ? 'Quiz' : 'Spelling'})
+                            </button>
                         </div>
                     )}
                     {status === 'waiting' && (
-                        <div className="py-8 animate-pulse"><p className="text-gray-500 mb-2">รหัสห้องของคุณ</p><div className="text-5xl font-mono font-bold text-indigo-600 tracking-widest mb-4">{generatedCode}</div><p className="text-sm text-gray-400">บอกรหัสนี้ให้เพื่อนเข้ามา...</p><div className="mt-4 text-3xl">⏳</div></div>
+                        <div className="py-8 animate-pulse">
+                            <p className="text-gray-500 mb-2">รหัสห้องของคุณ ({selectedGameType === 'quiz' ? 'Quiz' : 'Spelling'})</p>
+                            <div className="text-5xl font-mono font-bold text-indigo-600 tracking-widest mb-4">{generatedCode}</div>
+                            <p className="text-sm text-gray-400">บอกรหัสนี้ให้เพื่อนเข้ามา...</p>
+                            <div className="mt-4 text-3xl">⏳</div>
+                        </div>
                     )}
                     <button onClick={onBack} className="text-gray-400 text-sm underline mt-4">ย้อนกลับ</button>
                 </div>
             );
         }
 
-        function GameEngine({ mode, botDifficulty, fb, roomId, isHost, user, onGameOver, getNextUniqueQuestion }) {
+        function GameEngine({ mode, gameType, botDifficulty, fb, roomId, isHost, user, onGameOver, getNextUniqueQuestion }) {
             const [currentQ, setCurrentQ] = useState(null);
             const [options, setOptions] = useState([]);
             const [timeLeft, setTimeLeft] = useState(10);
             const [myScore, setMyScore] = useState(0);
             const [opScore, setOpScore] = useState(0);
             const [feedback, setFeedback] = useState(null); 
-            const [gameActive, setGameActive] = useState(false); // Changed to false initially
+            const [gameActive, setGameActive] = useState(false); 
             const [elapsedTime, setElapsedTime] = useState(0); 
-            const [startPhase, setStartPhase] = useState('ready'); // ready, go, null
+            const [startPhase, setStartPhase] = useState('ready'); 
+            
+            // Spelling Mode State
+            const [spellingInput, setSpellingInput] = useState([]); // Array of chars
+            const [availableChars, setAvailableChars] = useState([]); // Array of {id, char}
             
             const botIntervalRef = useRef(null);
             const startTimeRef = useRef(Date.now()); 
@@ -698,19 +776,17 @@
                     await new Promise(r => setTimeout(r, 500));
                     SoundManager.playReady();
                     setStartPhase('ready');
-                    
                     await new Promise(r => setTimeout(r, 1000));
                     SoundManager.playGo();
                     setStartPhase('go');
-                    
                     await new Promise(r => setTimeout(r, 800));
                     setStartPhase(null);
-                    setGameActive(true); // Game Starts Here
+                    setGameActive(true);
                 };
                 startSequence();
             }, []);
 
-            // BGM Logic: Intense if anyone has >= 7 points
+            // BGM Logic
             useEffect(() => {
                 if (!gameActive) return;
                 if (myScore >= 8 || opScore >= 8) {
@@ -723,7 +799,7 @@
             useEffect(() => {
                 if (gameActive) {
                     SoundManager.startBgm();
-                    startTimeRef.current = Date.now(); // Reset timer when active
+                    startTimeRef.current = Date.now();
                     timerRef.current = setInterval(() => { setElapsedTime(((Date.now() - startTimeRef.current) / 1000).toFixed(1)); }, 100);
                 }
                 return () => { clearInterval(timerRef.current); SoundManager.stopBgm(); };
@@ -731,10 +807,23 @@
             
             const nextQuestion = () => {
                 const target = getNextUniqueQuestion();
-                let distractors = VOCAB_DATA.filter(v => v.id !== target.id).sort(() => 0.5 - Math.random()).slice(0, 2);
-                let allOptions = [target, ...distractors].sort(() => 0.5 - Math.random());
                 setCurrentQ(target);
-                setOptions(allOptions);
+                
+                if (gameType === 'quiz') {
+                    // Quiz Mode Setup
+                    let distractors = VOCAB_DATA.filter(v => v.id !== target.id).sort(() => 0.5 - Math.random()).slice(0, 2);
+                    let allOptions = [target, ...distractors].sort(() => 0.5 - Math.random());
+                    setOptions(allOptions);
+                } else {
+                    // Spelling Mode Setup
+                    const word = target.word.toUpperCase().replace(/[^A-Z]/g, ''); // Remove spaces/special chars
+                    const chars = word.split('').map((c, i) => ({ id: i, char: c }));
+                    // Shuffle
+                    chars.sort(() => 0.5 - Math.random());
+                    setAvailableChars(chars);
+                    setSpellingInput([]);
+                }
+                
                 setTimeLeft(10); 
             };
 
@@ -750,25 +839,20 @@
                     botIntervalRef.current = setInterval(() => {
                         if (!gameActive) return;
                         if (Math.random() < winChance) {
-                            setOpScore(prev => {
-                                const newScore = prev + 1;
-                                return newScore;
-                            });
+                            setOpScore(prev => prev + 1);
                         }
                     }, intervalTime);
                 }
                 return () => { if (botIntervalRef.current) clearInterval(botIntervalRef.current); };
-            }, [botDifficulty, gameActive]); // Added gameActive dependency
+            }, [botDifficulty, gameActive]);
 
-            // Game End Logic (Effect based to avoid render-update loops)
+            // Game End Logic
             useEffect(() => {
                 if (mode === 'bot' && gameActive) {
                     if (myScore >= 10 || opScore >= 10) {
-                        // Calculate time
                         const myFinishTime = (Date.now() - startTimeRef.current) / 1000;
                         const botTime = myFinishTime * (0.8 + Math.random() * 0.4); 
                         const finalTimes = { p1: myFinishTime, p2: botTime };
-                        
                         setGameActive(false);
                         onGameOver(myScore, opScore, myScore > opScore ? 'win' : 'lose', finalTimes);
                     }
@@ -777,12 +861,15 @@
 
             useEffect(() => {
                 if (!gameActive) return;
-                if (timeLeft <= 0) { handleAnswer(null, false); return; }
+                if (timeLeft <= 0) { 
+                    handleAnswer(null, false); 
+                    return; 
+                }
                 const timer = setTimeout(() => setTimeLeft(t => t - 1), 1000);
                 return () => clearTimeout(timer);
             }, [timeLeft, gameActive]);
 
-            // FIXED: Removed 'gameActive' from useEffect dependency to prevent snapshot detachment
+            // Online Score Sync
             useEffect(() => {
                 if (mode === 'online' && fb && roomId) {
                     const { doc, onSnapshot } = window.firebaseModules;
@@ -865,6 +952,44 @@
                 }, 800);
             };
 
+            // --- Spelling Handlers ---
+            const handleLetterClick = (charObj) => {
+                if (!gameActive || feedback) return;
+                SoundManager.playClick();
+                
+                const newInput = [...spellingInput, charObj];
+                const newAvailable = availableChars.filter(c => c.id !== charObj.id);
+                
+                setSpellingInput(newInput);
+                setAvailableChars(newAvailable);
+
+                // Check if word complete
+                const currentWord = currentQ.word.toUpperCase().replace(/[^A-Z]/g, '');
+                if (newInput.length === currentWord.length) {
+                    const formedWord = newInput.map(c => c.char).join('');
+                    if (formedWord === currentWord) {
+                        handleAnswer(null, true);
+                    } else {
+                        // Wrong word formed, auto reset after delay
+                        SoundManager.playWrong();
+                        // Instead of full penalty loop, just shake/reset letters
+                        setSpellingInput([]);
+                        // Re-add used chars back to available (in original order for simplicity or just concat)
+                        // Actually, we need to restore them.
+                        // Let's just reconstruct available from scratch or keep track better.
+                        // Simplest: Reset round state visually? No, just put them back.
+                        setAvailableChars([...newAvailable, ...newInput]);
+                    }
+                }
+            };
+
+            const handleBackspace = () => {
+                if (spellingInput.length === 0) return;
+                const lastChar = spellingInput[spellingInput.length - 1];
+                setSpellingInput(spellingInput.slice(0, -1));
+                setAvailableChars([...availableChars, lastChar]);
+            };
+
             if (!currentQ) return <div className="p-10 text-center">Loading...</div>;
 
             const isIntense = myScore >= 8 || opScore >= 8;
@@ -919,25 +1044,61 @@
                         <span className="text-sm text-indigo-400 bg-indigo-50 px-2 py-1 rounded-md mt-2">หมวด: {currentQ.category}</span>
                     </div>
 
-                    {/* Options */}
-                    <div className="grid grid-cols-1 gap-3 z-10">
-                        {options.map((opt, idx) => (
-                            <button
-                                key={idx}
-                                disabled={feedback !== null}
-                                onClick={() => handleAnswer(opt, opt.id === currentQ.id)}
-                                className={`
-                                    bg-white border-b-4 font-bold py-4 rounded-xl text-xl transition-all active:border-b-0 active:translate-y-[4px] relative overflow-hidden
-                                    ${feedback !== null 
-                                        ? (opt.id === currentQ.id ? 'bg-green-100 border-green-400 text-green-700' : 'bg-gray-100 border-gray-300 text-gray-400') 
-                                        : 'border-indigo-100 hover:border-indigo-400 hover:bg-indigo-50 text-gray-700'}
-                                    ${feedback === 'wrong' && opt.id !== currentQ.id ? 'animate-shake' : ''}
-                                `}
-                            >
-                                {opt.word}
-                            </button>
-                        ))}
-                    </div>
+                    {/* Game Controls: Switch based on Game Type */}
+                    {gameType === 'quiz' ? (
+                        /* QUIZ MODE */
+                        <div className="grid grid-cols-1 gap-3 z-10">
+                            {options.map((opt, idx) => (
+                                <button
+                                    key={idx}
+                                    disabled={feedback !== null}
+                                    onClick={() => handleAnswer(opt, opt.id === currentQ.id)}
+                                    className={`
+                                        bg-white border-b-4 font-bold py-4 rounded-xl text-xl transition-all active:border-b-0 active:translate-y-[4px] relative overflow-hidden
+                                        ${feedback !== null 
+                                            ? (opt.id === currentQ.id ? 'bg-green-100 border-green-400 text-green-700' : 'bg-gray-100 border-gray-300 text-gray-400') 
+                                            : 'border-indigo-100 hover:border-indigo-400 hover:bg-indigo-50 text-gray-700'}
+                                        ${feedback === 'wrong' && opt.id !== currentQ.id ? 'animate-shake' : ''}
+                                    `}
+                                >
+                                    {opt.word}
+                                </button>
+                            ))}
+                        </div>
+                    ) : (
+                        /* SPELLING MODE */
+                        <div className="flex flex-col gap-4 z-10 w-full max-w-sm mx-auto">
+                            {/* Input Display Area */}
+                            <div className="flex justify-center gap-1 min-h-[60px] bg-white rounded-xl border-2 border-indigo-100 p-2 items-center shadow-inner cursor-pointer" onClick={handleBackspace}>
+                                {spellingInput.map((item, idx) => (
+                                    <div key={idx} className="w-10 h-10 bg-indigo-500 text-white rounded-lg flex items-center justify-center font-bold text-xl animate-pop">
+                                        {item.char}
+                                    </div>
+                                ))}
+                                {spellingInput.length === 0 && <span className="text-gray-300 text-sm">แตะตัวอักษรเพื่อเรียงคำ</span>}
+                            </div>
+
+                            {/* Letter Buttons */}
+                            <div className="flex flex-wrap justify-center gap-2">
+                                {availableChars.map((item) => (
+                                    <button
+                                        key={item.id}
+                                        onClick={() => handleLetterClick(item)}
+                                        className="w-12 h-12 bg-white border-b-4 border-indigo-200 text-indigo-600 rounded-lg font-bold text-xl shadow-sm active:border-b-0 active:translate-y-[2px] hover:bg-indigo-50"
+                                    >
+                                        {item.char}
+                                    </button>
+                                ))}
+                            </div>
+                            
+                            {/* Backspace / Clear Hint */}
+                            <div className="text-center">
+                                <button onClick={handleBackspace} className="text-xs text-red-400 underline" disabled={spellingInput.length===0}>
+                                    ลบตัวอักษรล่าสุด ⌫
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
