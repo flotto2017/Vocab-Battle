@@ -381,7 +381,7 @@
                 setView('login');
             };
 
-            const incrementWin = async () => {
+            const incrementWin = async (category, timeVal) => {
                 if (!fbInstance || !user) return;
                 const { doc, runTransaction } = window.firebaseModules;
                 const appId = typeof __app_id !== 'undefined' ? __app_id : 'vocab-game-data';
@@ -389,14 +389,28 @@
                 try {
                     await runTransaction(fbInstance.db, async (transaction) => {
                         const sfDoc = await transaction.get(userRef);
-                        let newWins = 1;
+                        let updates = { name: playerName };
+                        
                         if (sfDoc.exists()) {
                             const data = sfDoc.data();
-                            newWins = (data.wins || 0) + 1;
+                            if (category === 'bot_easy') {
+                                const currentBest = data.bot_easy_time;
+                                if (timeVal && (!currentBest || timeVal < currentBest)) {
+                                    updates.bot_easy_time = timeVal;
+                                }
+                            } else {
+                                updates[category] = (data[category] || 0) + 1;
+                            }
+                        } else {
+                            if (category === 'bot_easy') {
+                                updates.bot_easy_time = timeVal;
+                            } else {
+                                updates[category] = 1;
+                            }
                         }
-                        transaction.set(userRef, { name: playerName, wins: newWins }, { merge: true });
+                        transaction.set(userRef, updates, { merge: true });
                     });
-                } catch (e) {}
+                } catch (e) { console.error("Update win error", e); }
             };
 
             return (
@@ -496,7 +510,13 @@
                                             setGameResult(forcedResult);
                                             if (forcedResult === 'win') {
                                                 SoundManager.playWin();
-                                                if (mode === 'online') incrementWin();
+                                                
+                                                // RECORD SCORE BASED ON MODE & DIFFICULTY
+                                                if (mode === 'online') {
+                                                    incrementWin('wins');
+                                                } else if (mode === 'bot') {
+                                                    incrementWin(`bot_${botDifficulty}`, times.p1); // Pass time for easy bot
+                                                }
                                             } else {
                                                 SoundManager.playLose();
                                             }
@@ -504,7 +524,13 @@
                                             if (p1 > p2) {
                                                 setGameResult('win');
                                                 SoundManager.playWin();
-                                                if (mode === 'online') incrementWin();
+                                                
+                                                // RECORD SCORE (CLASSIC WIN)
+                                                if (mode === 'online') {
+                                                    incrementWin('wins');
+                                                } else if (mode === 'bot') {
+                                                    incrementWin(`bot_${botDifficulty}`, times.p1);
+                                                }
                                             } else if (p2 > p1) {
                                                 setGameResult('lose');
                                                 SoundManager.playLose();
@@ -591,6 +617,8 @@
         function LeaderboardScreen({ fb, onBack }) {
             const [leaders, setLeaders] = useState([]);
             const [loading, setLoading] = useState(true);
+            const [filter, setFilter] = useState('wins'); // wins (online), bot_easy, bot_medium, bot_hard
+
             useEffect(() => {
                 const fetchLeaderboard = async () => {
                     const { collection, getDocs } = window.firebaseModules;
@@ -598,22 +626,46 @@
                     const lbRef = collection(fb.db, 'artifacts', appId, 'public', 'data', 'leaderboard');
                     try {
                         const snapshot = await getDocs(lbRef);
-                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        data.sort((a, b) => (b.wins || 0) - (a.wins || 0));
+                        let data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        
+                        if (filter === 'bot_easy') {
+                            // Sort Ascending for Time, filter out those with no record
+                            data = data.filter(item => item.bot_easy_time !== undefined); 
+                            data.sort((a, b) => a.bot_easy_time - b.bot_easy_time);
+                        } else {
+                            // Sort Descending for Wins
+                            data.sort((a, b) => (b[filter] || 0) - (a[filter] || 0));
+                        }
+                        
                         setLeaders(data.slice(0, 10));
                     } catch (e) { console.error(e); } finally { setLoading(false); }
                 };
                 fetchLeaderboard();
-            }, [fb]);
+            }, [fb, filter]); // Refetch/Resort on filter change
+
             return (
                 <div className="space-y-4 h-full flex flex-col">
                     <h2 className="text-2xl font-bold text-center text-yellow-600 flex items-center justify-center gap-2"><span>🏆</span> อันดับคนเก่ง</h2>
+                    
+                    {/* Category Tabs */}
+                    <div className="flex gap-2 overflow-x-auto pb-2 custom-scroll">
+                        <button onClick={() => setFilter('wins')} className={`whitespace-nowrap px-3 py-1 rounded-full text-sm font-bold border transition ${filter==='wins'?'bg-blue-500 text-white border-blue-500':'bg-white text-gray-500 border-gray-200'}`}>แข่งเพื่อน</button>
+                        <button onClick={() => setFilter('bot_easy')} className={`whitespace-nowrap px-3 py-1 rounded-full text-sm font-bold border transition ${filter==='bot_easy'?'bg-green-500 text-white border-green-500':'bg-white text-gray-500 border-gray-200'}`}>บอท(ง่าย)</button>
+                        <button onClick={() => setFilter('bot_medium')} className={`whitespace-nowrap px-3 py-1 rounded-full text-sm font-bold border transition ${filter==='bot_medium'?'bg-yellow-500 text-white border-yellow-500':'bg-white text-gray-500 border-gray-200'}`}>บอท(กลาง)</button>
+                        <button onClick={() => setFilter('bot_hard')} className={`whitespace-nowrap px-3 py-1 rounded-full text-sm font-bold border transition ${filter==='bot_hard'?'bg-red-500 text-white border-red-500':'bg-white text-gray-500 border-gray-200'}`}>บอท(ยาก)</button>
+                    </div>
+
                     <div className="bg-white rounded-xl border-2 border-yellow-100 overflow-hidden flex-1 flex flex-col">
                         {loading ? <div className="p-8 text-center text-gray-400">กำลังโหลด...</div> : leaders.length === 0 ? <div className="p-8 text-center text-gray-400">ยังไม่มีข้อมูลการแข่ง</div> : (
                             <div className="divide-y divide-gray-100 flex flex-col h-full">
-                                <div className="grid grid-cols-12 bg-yellow-50 p-2 text-xs font-bold text-yellow-800"><div className="col-span-2 text-center">#</div><div className="col-span-7">ชื่อ</div><div className="col-span-3 text-center">ชนะ</div></div>
+                                <div className="grid grid-cols-12 bg-yellow-50 p-2 text-xs font-bold text-yellow-800"><div className="col-span-2 text-center">#</div><div className="col-span-7">ชื่อ</div><div className="col-span-3 text-center">{filter === 'bot_easy' ? 'เวลา' : 'ชนะ'}</div></div>
                                 <div className="overflow-y-auto custom-scroll flex-1">{leaders.map((player, index) => (
-                                    <div key={player.id} className="grid grid-cols-12 p-3 text-sm items-center hover:bg-gray-50"><div className="col-span-2 text-center font-bold text-gray-400">{index + 1}</div><div className="col-span-7 font-medium text-gray-700 truncate pr-2">{player.name}</div><div className="col-span-3 text-center font-bold text-indigo-500 bg-indigo-50 rounded-lg py-1">{player.wins || 0}</div></div>
+                                    <div key={player.id} className="grid grid-cols-12 p-3 text-sm items-center hover:bg-gray-50"><div className="col-span-2 text-center font-bold text-gray-400">{index + 1}</div><div className="col-span-7 font-medium text-gray-700 truncate pr-2">{player.name}</div>
+                                    <div className="col-span-3 text-center font-bold text-indigo-500 bg-indigo-50 rounded-lg py-1">
+                                        {filter === 'bot_easy' 
+                                            ? (player.bot_easy_time ? Number(player.bot_easy_time).toFixed(2) + 's' : '-') 
+                                            : (player[filter] || 0)}
+                                    </div></div>
                                 ))}</div>
                             </div>
                         )}
