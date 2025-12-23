@@ -637,7 +637,7 @@
                             data.sort((a, b) => (b[filter] || 0) - (a[filter] || 0));
                         }
                         
-                        setLeaders(data.slice(0, 10));
+                        setLeaders(data.slice(0, 30));
                     } catch (e) { console.error(e); } finally { setLoading(false); }
                 };
                 fetchLeaderboard();
@@ -1100,3 +1100,4 @@
     </script>
 </body>
 </html>
+
